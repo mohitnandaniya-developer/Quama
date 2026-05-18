@@ -179,9 +179,6 @@ def test_encrypt_decrypt_round_trip(test_settings) -> None:
     assert decrypt(cipher_text) == "jwt-secret"
 
 
-
-
-
 @pytest.mark.asyncio
 async def test_connect_angel_one_upserts_and_encrypts_tokens(
     client,

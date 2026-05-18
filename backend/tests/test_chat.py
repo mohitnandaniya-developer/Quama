@@ -305,9 +305,6 @@ async def test_stream_message_returns_sse_chunks_and_done_signal(
     assert history[-1]["content"] == "Hello world"
 
 
-
-
-
 @pytest.mark.asyncio
 async def test_health_check_returns_200(client) -> None:
     """GET /health returns service health information."""
