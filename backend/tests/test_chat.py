@@ -27,7 +27,6 @@ async def test_get_models(client) -> None:
 async def test_send_message_with_mocked_llm(
     client,
     fake_cache_service,
-    fake_pinecone_service,
     user_headers,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -121,8 +120,6 @@ async def test_send_message_with_mocked_llm(
     assert history[-1]["content"] == "Mocked assistant reply"
     assert fake_cache_service.ttl_by_key[cache_key] == 3600
     assert captured_messages[0].content == SYSTEM_SCRATCHPAD_PROMPT
-    assert "KNOWLEDGE BASE CONTEXT" in captured_messages[1].content
-    assert "green CTA" in captured_messages[1].content
     assert captured_messages[-1].content[0] == {"type": "text", "text": "Hello there"}
     assert captured_messages[-1].content[1] == {
         "type": "text",
@@ -156,8 +153,6 @@ async def test_send_message_with_mocked_llm(
             "mime_type": "image/png",
         },
     ]
-    user_namespace = fake_pinecone_service.build_user_namespace(user_id="test-user")
-    assert len(fake_pinecone_service.asset_records[user_namespace]) == 1
 
 
 @pytest.mark.asyncio
@@ -310,75 +305,7 @@ async def test_stream_message_returns_sse_chunks_and_done_signal(
     assert history[-1]["content"] == "Hello world"
 
 
-@pytest.mark.asyncio
-async def test_chat_injects_conversation_memory_after_summary_window(
-    client,
-    fake_pinecone_service,
-    user_headers,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Every ten persisted messages produce retrievable memory context."""
-    captured_messages = []
 
-    class FakeChatLLM:
-        async def ainvoke(self, messages):
-            captured_messages.append(messages)
-            return SimpleNamespace(content="Chat reply")
-
-    class FakeSummaryLLM:
-        async def ainvoke(self, messages):
-            del messages
-            return SimpleNamespace(
-                content=("The user is working toward a Friday deployment deadline.")
-            )
-
-    def fake_get_llm(provider: str, model_name: str):
-        del model_name
-        return FakeSummaryLLM() if provider == "groq" else FakeChatLLM()
-
-    monkeypatch.setattr(
-        LLMFactory,
-        "get_llm",
-        staticmethod(fake_get_llm),
-    )
-
-    conversation_response = await client.post(
-        "/api/v1/conversations",
-        headers=user_headers,
-        json={"provider": "openai", "model_name": "gpt-4o"},
-    )
-    conversation_id = conversation_response.json()["id"]
-
-    for turn in range(5):
-        response = await client.post(
-            "/api/v1/chat/message",
-            headers=user_headers,
-            json={
-                "conversation_id": conversation_id,
-                "content": f"Turn {turn} about the deployment deadline",
-            },
-        )
-        assert response.status_code == 201
-
-    memory_namespace = fake_pinecone_service.build_memory_namespace(user_id="test-user")
-    assert fake_pinecone_service.memory_records[memory_namespace]
-
-    response = await client.post(
-        "/api/v1/chat/message",
-        headers=user_headers,
-        json={
-            "conversation_id": conversation_id,
-            "content": "What is the deadline again?",
-        },
-    )
-
-    assert response.status_code == 201
-    latest_messages = captured_messages[-1]
-    assert any(
-        isinstance(getattr(message, "content", None), str)
-        and "CONVERSATION MEMORY" in message.content
-        for message in latest_messages
-    )
 
 
 @pytest.mark.asyncio

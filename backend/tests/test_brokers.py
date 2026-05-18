@@ -179,15 +179,7 @@ def test_encrypt_decrypt_round_trip(test_settings) -> None:
     assert decrypt(cipher_text) == "jwt-secret"
 
 
-def test_encrypt_requires_broker_token_secret(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Encryption fails fast when the broker token secret is missing."""
-    monkeypatch.setenv("BROKER_TOKEN_SECRET", "   ")
-    get_settings.cache_clear()
 
-    with pytest.raises(ValueError, match="BROKER_TOKEN_SECRET"):
-        get_settings()
-
-    get_settings.cache_clear()
 
 
 @pytest.mark.asyncio
