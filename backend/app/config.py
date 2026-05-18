@@ -24,47 +24,20 @@ class Settings(BaseSettings):
         env_ignore_empty=True,
     )
 
+    # LLM providers — only set the key(s) you actually use.
+    groq_api_key: str = Field(default="", alias="GROQ_API_KEY")
     openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
     google_api_key: str = Field(default="", alias="GOOGLE_API_KEY")
-    groq_api_key: str = Field(default="", alias="GROQ_API_KEY")
+
+    # NewsAPI.ai MCP key (server-side only).
     newsapi_key: str = Field(default="", alias="NEWS_API_KEY")
-    pinecone_api_key: str = Field(default="", alias="PINECONE_API_KEY")
-    pinecone_index_name: str = Field(
-        default="quama-assets",
-        alias="PINECONE_INDEX_NAME",
-    )
-    pinecone_namespace: str = Field(
-        default="project-default",
-        alias="PINECONE_NAMESPACE",
-    )
-    # Reserved for older Pinecone deployments; current code resolves by index host.
-    pinecone_environment: str = Field(default="", alias="PINECONE_ENVIRONMENT")
-    pinecone_index_host: str = Field(default="", alias="PINECONE_INDEX_HOST")
-    pinecone_embed_model: str = Field(
-        default="multilingual-e5-large",
-        alias="PINECONE_EMBED_MODEL",
-    )
-    # Reserved for future non-Pinecone embedding providers.
-    embedding_model: str = Field(
-        default="",
-        alias="EMBEDDING_MODEL",
-    )
-    # Reserved for future OpenAI embedding paths.
-    openai_embedding_model: str = Field(
-        default="text-embedding-3-small",
-        alias="OPENAI_EMBEDDING_MODEL",
-    )
-    openai_vision_model: str = Field(
-        default="gpt-4o-mini",
-        alias="OPENAI_VISION_MODEL",
-    )
+
+    # Cache / Session — provide one of the Redis variants.
+    # rediss:// URLs are used as a direct Redis connection (no REST token needed).
     upstash_redis_rest_url: str = Field(default="", alias="UPSTASH_REDIS_REST_URL")
-    upstash_redis_rest_token: str = Field(
-        default="",
-        alias="UPSTASH_REDIS_REST_TOKEN",
-    )
-    redis_url: str = Field(default="", alias="REDIS_URL")
-    market_data_redis_url: str = Field(default="", alias="MARKET_DATA_REDIS_URL")
+    upstash_redis_rest_token: str = Field(default="", alias="UPSTASH_REDIS_REST_TOKEN")
+
+    # Database.
     database_url: str = Field(default="", alias="DATABASE_URL")
     debug: bool = Field(default=False, alias="DEBUG")
     allowed_origins: Annotated[list[str], NoDecode] = Field(
@@ -232,11 +205,11 @@ class Settings(BaseSettings):
 
     @property
     def market_data_bus_url(self) -> str:
-        """Return the direct-Redis URL used by the market-data pipeline."""
-        if self.market_data_redis_url.strip():
-            return self.market_data_redis_url.strip()
-        if self.redis_url.strip():
-            return self.redis_url.strip()
+        """Return the direct-Redis URL used by the market-data pipeline.
+
+        Falls back to UPSTASH_REDIS_REST_URL when it is a native Redis URL
+        (redis:// or rediss://), which is the typical Render/Upstash setup.
+        """
         if self.upstash_redis_rest_url.startswith(("redis://", "rediss://")):
             return self.upstash_redis_rest_url.strip()
         return ""

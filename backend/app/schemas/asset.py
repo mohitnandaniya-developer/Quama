@@ -70,7 +70,6 @@ class AssetSchema(BaseModel):
     kind: str
     mime_type: str
     size_bytes: int
-    pinecone_indexed: bool
     created_at: datetime
     updated_at: datetime
 

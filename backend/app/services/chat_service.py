@@ -33,14 +33,12 @@ from app.schemas.chat import ChatAttachmentRequest, ChatMessageResponse
 from app.services.cache_service import CacheService
 from app.services.mcp.newsapi_mcp_client import ALLOWED_NEWSAPI_TOOLS
 from app.services.mcp_connection_service import MCPConnectionService
-from app.services.pinecone_service import PineconeService
 from app.services.portfolio_sync_service import PortfolioSyncService
 
 logger = logging.getLogger(__name__)
 
 SYSTEM_SCRATCHPAD_PROMPT = (
-    "You are Quama, an agentic AI assistant. You have access to the user's "
-    "uploaded knowledge base via RAG retrieval. Think step by step. If a task "
+    "You are Quama, an agentic AI assistant. Think step by step. If a task "
     "requires multiple steps, outline your plan briefly before executing."
 )
 MEMORY_SUMMARY_PROVIDER = "groq"
@@ -61,7 +59,6 @@ class ChatService:
         *,
         session: AsyncSession,
         cache_service: CacheService,
-        pinecone_service: PineconeService,
         portfolio_sync_service: PortfolioSyncService,
         settings: Settings,
         groww_broker_service: Any | None = None,
@@ -69,7 +66,6 @@ class ChatService:
     ) -> None:
         self.session = session
         self.cache_service = cache_service
-        self.pinecone_service = pinecone_service
         self.portfolio_sync_service = portfolio_sync_service
         self.settings = settings
         self.groww_broker_service = groww_broker_service
@@ -556,15 +552,8 @@ class ChatService:
         user_message: str,
         user_id: str,
     ) -> list[str]:
-        try:
-            return await self.pinecone_service.retrieve_context(
-                user_message=user_message,
-                user_id=user_id,
-                top_k=5,
-            )
-        except Exception:
-            logger.exception("Knowledge retrieval failed for user %s.", user_id)
-            return []
+        """Knowledge retrieval is disabled (Pinecone removed)."""
+        return []
 
     async def _safe_retrieve_memory_context(
         self,
@@ -572,15 +561,8 @@ class ChatService:
         user_message: str,
         user_id: str,
     ) -> list[str]:
-        try:
-            return await self.pinecone_service.retrieve_memories(
-                user_id=user_id,
-                user_message=user_message,
-                top_k=3,
-            )
-        except Exception:
-            logger.exception("Memory retrieval failed for user %s.", user_id)
-            return []
+        """Memory retrieval is disabled (Pinecone removed)."""
+        return []
 
     async def _safe_retrieve_portfolio_context(
         self,
@@ -710,35 +692,8 @@ class ChatService:
         conversation: Conversation,
         user_id: str,
     ) -> None:
-        if not self.pinecone_service.enabled:
-            return
-
-        messages = await self.message_repo.list_for_conversation(conversation.id)
-        if not messages or len(messages) % self.memory_summary_window != 0:
-            return
-
-        segment = messages[-self.memory_summary_window :]
-        transcript = [self._serialize_message(message) for message in segment]
-        summary = await self._summarize_memory_segment(
-            transcript,
-            provider=conversation.provider,
-            model_name=conversation.model_name,
-        )
-        if not summary:
-            return
-
-        try:
-            await self.pinecone_service.store_memory_summary(
-                user_id=user_id,
-                conversation_id=str(conversation.id),
-                summary=summary,
-                segment_key=str(len(messages) // self.memory_summary_window),
-            )
-        except Exception:
-            logger.exception(
-                "Persisting conversation memory failed for conversation %s.",
-                conversation.id,
-            )
+        """Memory storage is disabled (Pinecone removed)."""
+        return
 
     async def _summarize_memory_segment(
         self,

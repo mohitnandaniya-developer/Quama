@@ -1,11 +1,10 @@
-"""Asset metadata and indexing service."""
+"""Asset metadata service."""
 
 from __future__ import annotations
 
 import base64
 import logging
 import re
-import tempfile
 import uuid
 from pathlib import Path
 
@@ -20,7 +19,6 @@ from app.schemas.asset import (
     AssetUploadAttachmentRequest,
     AssetUploadResponse,
 )
-from app.services.pinecone_service import PineconeService
 
 logger = logging.getLogger(__name__)
 
@@ -34,16 +32,14 @@ class AssetNotFoundError(AppError):
 
 
 class AssetService:
-    """Persist uploaded asset metadata and index payloads for retrieval."""
+    """Persist uploaded asset metadata."""
 
     def __init__(
         self,
         *,
         session: AsyncSession,
-        pinecone_service: PineconeService,
     ) -> None:
         self.session = session
-        self.pinecone_service = pinecone_service
         self.asset_repo = UserAssetRepository(session)
 
     async def list_assets(self, *, user_id: str) -> AssetListResponse:
@@ -57,7 +53,7 @@ class AssetService:
         user_id: str,
         attachments: list[AssetUploadAttachmentRequest],
     ) -> AssetUploadResponse:
-        """Index uploaded assets and store metadata in the database."""
+        """Store uploaded asset metadata in the database."""
         stored_assets: list[UserAsset] = []
         for attachment in attachments:
             raw_bytes = self._attachment_bytes(attachment)
@@ -78,31 +74,8 @@ class AssetService:
                     mime_type=attachment.mime_type,
                     size_bytes=len(raw_bytes),
                     storage_path=storage_name,
-                    pinecone_indexed=False,
                 )
             )
-
-            try:
-                with tempfile.TemporaryDirectory() as temp_dir:
-                    temp_path = Path(temp_dir) / Path(storage_name).name
-                    temp_path.write_bytes(raw_bytes)
-                    index_result = await self.pinecone_service.chunk_and_index(
-                        asset_id=str(stored_assets[-1].id),
-                        user_id=user_id,
-                        file_path=str(temp_path),
-                        file_name=Path(attachment.name).name,
-                        mime_type=attachment.mime_type,
-                    )
-            except Exception:
-                logger.exception(
-                    "Pinecone indexing failed for asset %s.",
-                    stored_assets[-1].id,
-                )
-            else:
-                await self.asset_repo.set_pinecone_indexed(
-                    stored_assets[-1],
-                    pinecone_indexed=index_result["vectors_upserted"] > 0,
-                )
 
         await self.session.commit()
         for asset in stored_assets:
@@ -112,18 +85,10 @@ class AssetService:
         )
 
     async def delete_asset(self, *, user_id: str, asset_id: uuid.UUID) -> None:
-        """Delete a stored asset and its indexed vectors."""
+        """Delete a stored asset record."""
         asset = await self.asset_repo.get_by_id_for_user(asset_id, user_id)
         if asset is None:
             raise AssetNotFoundError()
-
-        try:
-            await self.pinecone_service.delete_asset_vectors(
-                asset_id=str(asset.id),
-                user_id=user_id,
-            )
-        except Exception:
-            logger.exception("Pinecone cleanup failed for asset %s.", asset.id)
 
         await self.asset_repo.delete(asset)
         await self.session.commit()
@@ -135,7 +100,6 @@ class AssetService:
             kind=asset.kind.value,
             mime_type=asset.mime_type,
             size_bytes=asset.size_bytes,
-            pinecone_indexed=asset.pinecone_indexed,
             created_at=asset.created_at,
             updated_at=asset.updated_at,
         )

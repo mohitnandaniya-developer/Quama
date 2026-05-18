@@ -63,14 +63,6 @@ class CacheMissError(AppError):
     default_message = "Cached conversation history is unavailable."
 
 
-class PineconeConfigurationError(AppError):
-    """Raised when Pinecone settings are incomplete."""
-
-    status_code = 503
-    code = "pinecone_not_configured"
-    default_message = "Pinecone is not configured."
-
-
 class BrokerNotConfiguredError(AppError):
     """Raised when broker settings are incomplete."""
 

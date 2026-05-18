@@ -28,7 +28,6 @@ from app.services.market_data_bus import MarketDataBus
 from app.services.market_data_gateway_service import MarketDataGatewayService
 from app.services.mcp_agent_service import MCPAgentService
 from app.services.mcp_connection_service import MCPConnectionService
-from app.services.pinecone_service import PineconeService
 from app.services.portfolio_sync_service import PortfolioSyncService
 
 
@@ -49,19 +48,10 @@ def get_cache_service(request: Request) -> CacheService:
     if cache_service is None:
         msg = (
             "Cache service is not initialized. "
-            "Check that upstash_redis_rest_url and upstash_redis_rest_token are set."
+            "Check that UPSTASH_REDIS_REST_URL is set correctly."
         )
         raise RuntimeError(msg)
     return cache_service
-
-
-def get_pinecone_service(request: Request) -> PineconeService:
-    """Return the shared Pinecone service."""
-    pinecone_service = getattr(request.app.state, "pinecone_service", None)
-    if pinecone_service is None:
-        msg = "Pinecone service is not initialized."
-        raise RuntimeError(msg)
-    return pinecone_service
 
 
 def get_market_data_bus(request: Request) -> MarketDataBus:
@@ -118,7 +108,6 @@ def get_conversation_service(
 def get_chat_service(
     session: Annotated[AsyncSession, Depends(get_db_session)],
     cache_service: Annotated[CacheService, Depends(get_cache_service)],
-    pinecone_service: Annotated[PineconeService, Depends(get_pinecone_service)],
     settings: Annotated[Settings, Depends(get_settings_dependency)],
 ) -> ChatService:
     """Build a chat service for the current request."""
@@ -130,7 +119,6 @@ def get_chat_service(
     return ChatService(
         session=session,
         cache_service=cache_service,
-        pinecone_service=pinecone_service,
         history_cache_ttl_seconds=settings.chat_history_cache_ttl_seconds,
         settings=settings,
         portfolio_sync_service=PortfolioSyncService(
@@ -147,12 +135,10 @@ def get_chat_service(
 
 def get_asset_service(
     session: Annotated[AsyncSession, Depends(get_db_session)],
-    pinecone_service: Annotated[PineconeService, Depends(get_pinecone_service)],
 ) -> AssetService:
     """Build an asset service for the current request."""
     return AssetService(
         session=session,
-        pinecone_service=pinecone_service,
     )
 
 

@@ -25,7 +25,6 @@ from app.dependencies import get_cache_service, get_db_session
 from app.services.broker_session_service import refresh_all_expiring_tokens
 from app.services.cache_service import CacheService
 from app.services.market_data_bus import MarketDataBus
-from app.services.pinecone_service import PineconeService
 
 logger = logging.getLogger(__name__)
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -57,12 +56,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             token=resolved_settings.upstash_redis_rest_token,
         )
         market_data_bus = MarketDataBus(redis_url=resolved_settings.market_data_bus_url)
-        pinecone_service = PineconeService(settings=resolved_settings)
 
         app.state.settings = resolved_settings
         app.state.cache_service = cache_service
         app.state.market_data_bus = market_data_bus
-        app.state.pinecone_service = pinecone_service
         session_maker = get_session_maker()
 
         async def token_refresh_loop() -> None:
@@ -98,7 +95,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 await refresh_task
             except asyncio.CancelledError:
                 logger.debug("Broker token refresh loop stopped.")
-            await pinecone_service.close()
             await cache_service.close()
             await market_data_bus.close()
             await dispose_engine()

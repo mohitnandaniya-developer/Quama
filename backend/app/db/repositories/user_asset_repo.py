@@ -26,7 +26,6 @@ class UserAssetRepository:
         mime_type: str,
         size_bytes: int,
         storage_path: str,
-        pinecone_indexed: bool = False,
     ) -> UserAsset:
         """Create and flush a new stored asset."""
         asset = UserAsset(
@@ -36,7 +35,6 @@ class UserAssetRepository:
             mime_type=mime_type,
             size_bytes=size_bytes,
             storage_path=storage_path,
-            pinecone_indexed=pinecone_indexed,
         )
         self.session.add(asset)
         await self.session.flush()
@@ -69,18 +67,6 @@ class UserAssetRepository:
 
     async def touch(self, asset: UserAsset) -> UserAsset:
         """Update the asset timestamp."""
-        asset.updated_at = datetime.now(UTC)
-        await self.session.flush()
-        return asset
-
-    async def set_pinecone_indexed(
-        self,
-        asset: UserAsset,
-        *,
-        pinecone_indexed: bool,
-    ) -> UserAsset:
-        """Update the vector-index status for an asset."""
-        asset.pinecone_indexed = pinecone_indexed
         asset.updated_at = datetime.now(UTC)
         await self.session.flush()
         return asset

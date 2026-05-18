@@ -91,7 +91,6 @@ export type ApiStoredAsset = {
   kind: "file" | "image"
   mime_type: string
   size_bytes: number
-  pinecone_indexed: boolean
   created_at: string
   updated_at: string
 }
