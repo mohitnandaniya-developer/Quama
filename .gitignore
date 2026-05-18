@@ -1,0 +1,99 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+*.egg
+.eggs/
+*.so
+.Python
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Virtual Environments
+.venv/
+venv/
+env/
+ENV/
+
+# Node / pnpm
+node_modules/
+.pnpm-store/
+.turbo/
+
+# Build Outputs
+dist/
+build/
+.next/
+.output/
+.nitro/
+.tanstack/
+.vinxi/
+
+# Environment Files (secrets)
+.env
+.env.local
+.env.production
+.env.*.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Sample files are committed and must not contain real secrets.
+!.env.sample
+!**/.env.sample
+
+# Logs
+*.log
+*.log.*
+logs/
+backend/logs/*
+!backend/logs/.gitkeep
+
+# Local runtime leftovers
+backend/media/
+backend/test-media/
+
+# Databases
+*.db
+*.sqlite
+*.sqlite3
+*.db-*
+*.sqlite-*
+*.sqlite3-*
+
+# Cache / Tool Artifacts
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+*.pid
+
+# Agent / Skill Artifacts
+.agents/
+.codex/
+skills-lock.json
+skills/
+
+# Temporary / patch artifacts
+*.tmp
+*.bak
+*.orig
+*.rej
+*~
+
+# OS Artifacts
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo

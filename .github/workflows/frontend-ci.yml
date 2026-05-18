@@ -1,0 +1,27 @@
+name: Frontend CI
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'frontend/**'
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'frontend/**'
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - uses: pnpm/action-setup@v2
+        with:
+          version: 9.15.9
+      - run: cd frontend && pnpm install --frozen-lockfile
+      - run: cd frontend && pnpm lint
+      - run: cd frontend && pnpm format:check
+      - run: cd frontend && pnpm typecheck
+      - run: cd frontend && pnpm build

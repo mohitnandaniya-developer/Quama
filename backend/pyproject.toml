@@ -1,0 +1,51 @@
+[project]
+name = "ai-chat-backend"
+version = "0.1.0"
+description = "Production-ready FastAPI backend for an AI chat application."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "asyncpg>=0.30.0",
+  "psycopg2-binary>=2.9.0",
+  "alembic>=1.16.0",
+  "cryptography>=42.0.0",
+  "fastapi>=0.116.0",
+  "greenlet>=3.2.4",
+  "growwapi>=1.5.0",
+  "httpx>=0.28.0",
+  "langchain>=0.3.27",
+  "langchain-google-genai>=2.1.10",
+  "langchain-groq>=0.3.8",
+  "langchain-openai>=0.3.32",
+  "pinecone>=7.3.0",
+  "pydantic>=2.11.0",
+  "pydantic-settings>=2.10.1",
+  "pypdf>=6.10.2",
+  "python-dotenv>=1.1.1",
+  "redis>=6.4.0",
+  "mcp>=1.0.0",
+  "smartapi-python>=1.3.0",
+  "sqlalchemy>=2.0.43",
+  "uvicorn[standard]>=0.35.0",
+  "logzero>=1.7.0",
+  "websocket-client>=1.9.0",
+]
+
+[dependency-groups]
+dev = [
+  "aiosqlite>=0.21.0",
+  "asgi-lifespan>=2.1.0",
+  "pytest>=8.4.1",
+  "pytest-asyncio>=1.1.0",
+  "ruff>=0.12.11",
+]
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"

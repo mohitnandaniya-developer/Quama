@@ -1,0 +1,37 @@
+name: Backend CI
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'backend/**'
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'backend/**'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: test_user
+          POSTGRES_PASSWORD: test_password
+          POSTGRES_DB: quama_test
+        options: --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
+        ports:
+          - 5432:5432
+    
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      - run: curl -LsSf https://astral.sh/uv/install.sh | sh
+      - run: cd backend && uv sync --all-groups
+      - run: cd backend && uv run ruff check .
+      - run: cd backend && uv run ruff format --check .
+      - run: cd backend && uv run pytest tests/ -v --tb=short
+        env:
+          DATABASE_URL: postgresql://test_user:test_password@localhost:5432/quama_test

@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.pyc
+# .env
+# .env.local
+# .env.production
+tests/
+*.log
+logs/
+media/
+.pytest_cache/
+.ruff_cache/
