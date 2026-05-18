@@ -37,25 +37,34 @@ export const Route = createRootRoute({
 })
 
 function RootDocument({ children }: { children: React.ReactNode }) {
+  const clerkKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY
+
   return (
     <html lang="en" className="dark">
       <head>
         <HeadContent />
       </head>
       <body className="min-h-svh bg-background text-foreground antialiased">
-        <ClerkProvider
-          publishableKey={import.meta.env.VITE_CLERK_PUBLISHABLE_KEY}
-          appearance={{ theme: shadcn }}
-          signInUrl="/sign-in"
-          signUpUrl="/sign-up"
-          signInFallbackRedirectUrl="/"
-          signUpFallbackRedirectUrl="/"
-        >
+        {clerkKey ? (
+          <ClerkProvider
+            publishableKey={clerkKey}
+            appearance={{ theme: shadcn }}
+            signInUrl="/sign-in"
+            signUpUrl="/sign-up"
+            signInFallbackRedirectUrl="/"
+            signUpFallbackRedirectUrl="/"
+          >
+            <TooltipProvider>
+              {children}
+              <Toaster richColors position="top-right" />
+            </TooltipProvider>
+          </ClerkProvider>
+        ) : (
           <TooltipProvider>
             {children}
             <Toaster richColors position="top-right" />
           </TooltipProvider>
-        </ClerkProvider>
+        )}
         <Scripts />
       </body>
     </html>
