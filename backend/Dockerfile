@@ -18,7 +18,7 @@ COPY app/ ./app/
 COPY alembic/ ./alembic/
 COPY alembic.ini ./
 COPY workers/ ./workers/
-COPY .env ./
+COPY .env.sample .env* ./
 
 ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONUNBUFFERED=1
