@@ -1,11 +1,12 @@
 {
   "$schema": "https://turbo.build/schema.json",
   "ui": "tui",
+  "globalEnv": ["VITE_API_BASE_URL", "VITE_CLERK_PUBLISHABLE_KEY"],
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
       "inputs": ["$TURBO_DEFAULT$", ".env*"],
-      "outputs": [".output/**"]
+      "outputs": [".vercel/output/**", ".output/**", "dist/**"]
     },
     "lint": {
       "dependsOn": ["^lint"]
