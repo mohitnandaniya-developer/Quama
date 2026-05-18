@@ -122,5 +122,6 @@ class MarketDataGatewayService:
     def _ensure_enabled(self) -> None:
         if not self.market_data_bus.enabled:
             raise MarketDataNotConfiguredError(
-                "A Redis URL (UPSTASH_REDIS_REST_URL with rediss://) is required for market streaming."
+                "A Redis URL (UPSTASH_REDIS_REST_URL with rediss://) "
+                "is required for market streaming."
             )
