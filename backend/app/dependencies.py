@@ -37,7 +37,7 @@ def get_settings_dependency(request: Request) -> Settings:
     return getattr(request.app.state, "settings", get_settings())
 
 
-async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
+async def get_db_session() -> AsyncGenerator[AsyncSession | None, None]:
     """Yield an async database session."""
     async for session in get_async_session():
         yield session

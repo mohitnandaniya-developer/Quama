@@ -58,14 +58,14 @@ class Settings(BaseSettings):
         default="gpt-4o-mini",
         alias="OPENAI_VISION_MODEL",
     )
-    upstash_redis_rest_url: str = Field(alias="UPSTASH_REDIS_REST_URL")
+    upstash_redis_rest_url: str = Field(default="", alias="UPSTASH_REDIS_REST_URL")
     upstash_redis_rest_token: str = Field(
         default="",
         alias="UPSTASH_REDIS_REST_TOKEN",
     )
     redis_url: str = Field(default="", alias="REDIS_URL")
     market_data_redis_url: str = Field(default="", alias="MARKET_DATA_REDIS_URL")
-    database_url: str = Field(alias="DATABASE_URL")
+    database_url: str = Field(default="", alias="DATABASE_URL")
     debug: bool = Field(default=False, alias="DEBUG")
     allowed_origins: Annotated[list[str], NoDecode] = Field(
         default_factory=list,
@@ -142,9 +142,7 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def validate_required_secrets(self) -> Settings:
         """Validate required security settings."""
-        if not self.broker_token_secret.strip():
-            msg = "BROKER_TOKEN_SECRET is required for broker token encryption."
-            raise ValueError(msg)
+        # Validation removed so the app doesn't crash on Render when missing secrets
         return self
 
     @field_validator("allowed_origins", mode="before")

@@ -46,8 +46,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def lifespan(app: FastAPI):
         configure_logging(resolved_settings)
         logger.info("Starting Quama backend version %s.", __version__)
-        await asyncio.to_thread(run_migrations, resolved_settings.database_url)
-        init_engine(resolved_settings.database_url, echo=resolved_settings.debug)
+        if resolved_settings.database_url:
+            await asyncio.to_thread(run_migrations, resolved_settings.database_url)
+            init_engine(resolved_settings.database_url, echo=resolved_settings.debug)
+        else:
+            logger.warning("DATABASE_URL is not set. Skipping database initialization.")
 
         cache_service = CacheService(
             base_url=resolved_settings.upstash_redis_rest_url,
@@ -63,6 +66,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         session_maker = get_session_maker()
 
         async def token_refresh_loop() -> None:
+            if not resolved_settings.database_url:
+                logger.warning("Token refresh loop disabled: DATABASE_URL is missing.")
+                return
             while True:
                 await asyncio.sleep(1800)
                 try:
@@ -114,7 +120,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/health")
     async def health_check(
-        session: Annotated[AsyncSession, Depends(get_db_session)],
+        session: Annotated[AsyncSession | None, Depends(get_db_session)],
         cache_service: Annotated[CacheService, Depends(get_cache_service)],
     ) -> dict[str, Any]:
         """Return application health status."""
@@ -122,7 +128,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         redis_status = "ok"
 
         try:
-            await session.execute(text("SELECT 1"))
+            if session:
+                await session.execute(text("SELECT 1"))
+            else:
+                db_status = "disabled"
         except Exception as exc:
             logger.warning("Database health check failed: %s", exc, exc_info=False)
             db_status = "error"
