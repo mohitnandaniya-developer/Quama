@@ -1,7 +1,7 @@
 """Pytest conftest shim importing fixtures from `fixtures.py`."""
 
-from pathlib import Path
 import importlib.util
+from pathlib import Path
 
 TESTS_DIR = Path(__file__).resolve().parent
 fixtures_path = TESTS_DIR / "test_fixtures.py"
