@@ -27,15 +27,9 @@ PROVIDER_CATALOG: dict[str, MCPProviderInfo] = {
         description="Portfolio, holdings, funds, and positions via MCP tools.",
         transport="mock",
     ),
-    "github": MCPProviderInfo(
-        provider="github",
-        label="GitHub",
-        description="Repository and profile tools exposed through MCP.",
-        transport="mock",
-    ),
     "newsapi": MCPProviderInfo(
         provider="newsapi",
-        label="NewsAPI.ai",
+        label="NewsAPI",
         description="Search current articles, events, topic pages, and suggestions.",
         transport="mock",
     ),

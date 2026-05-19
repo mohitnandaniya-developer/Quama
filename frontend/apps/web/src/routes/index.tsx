@@ -224,18 +224,18 @@ interface SpeechRecognition extends EventTarget {
   lang: string
   onend: ((this: SpeechRecognition, event: Event) => void) | null
   onerror:
-    | ((this: SpeechRecognition, event: SpeechRecognitionErrorEvent) => void)
-    | null
+  | ((this: SpeechRecognition, event: SpeechRecognitionErrorEvent) => void)
+  | null
   onresult:
-    | ((this: SpeechRecognition, event: SpeechRecognitionEvent) => void)
-    | null
+  | ((this: SpeechRecognition, event: SpeechRecognitionEvent) => void)
+  | null
   start: () => void
   stop: () => void
   abort: () => void
 }
 
 interface SpeechRecognitionConstructor {
-  new (): SpeechRecognition
+  new(): SpeechRecognition
 }
 
 declare global {
@@ -316,22 +316,22 @@ const brokerCards: Array<{
   name: string
   isAvailable: boolean
 }> = [
-  {
-    id: "angel-one",
-    name: "Angel One",
-    isAvailable: true,
-  },
-  {
-    id: "kite",
-    name: "Kite",
-    isAvailable: false,
-  },
-  {
-    id: "groww",
-    name: "Groww",
-    isAvailable: true,
-  },
-]
+    {
+      id: "angel-one",
+      name: "Angel One",
+      isAvailable: true,
+    },
+    {
+      id: "kite",
+      name: "Kite",
+      isAvailable: false,
+    },
+    {
+      id: "groww",
+      name: "Groww",
+      isAvailable: true,
+    },
+  ]
 
 function fromApiBrokerName(broker: string): BrokerOption | null {
   switch (broker) {
@@ -999,9 +999,9 @@ function normalizePerformancePoint(
   return {
     date: isValidDate
       ? parsed.toLocaleDateString("en-US", {
-          month: "short",
-          day: "numeric",
-        })
+        month: "short",
+        day: "numeric",
+      })
       : rawDate,
     value,
     invested,
@@ -1459,9 +1459,9 @@ function BrokerCanvas({
                   <TrendingUp data-icon="inline-start" />
                   {resolvedTotalInvested && resolvedTotalInvested > 0
                     ? fmtPct(
-                        ((resolvedOverallGain ?? 0) / resolvedTotalInvested) *
-                          100
-                      )
+                      ((resolvedOverallGain ?? 0) / resolvedTotalInvested) *
+                      100
+                    )
                     : "Unrealised gain"}
                 </Badge>
               ) : (
@@ -1469,9 +1469,9 @@ function BrokerCanvas({
                   <TrendingDown data-icon="inline-start" />
                   {resolvedTotalInvested && resolvedTotalInvested > 0
                     ? fmtPct(
-                        ((resolvedOverallGain ?? 0) / resolvedTotalInvested) *
-                          100
-                      )
+                      ((resolvedOverallGain ?? 0) / resolvedTotalInvested) *
+                      100
+                    )
                     : "Unrealised loss"}
                 </Badge>
               )}
@@ -1663,12 +1663,12 @@ function BrokerCanvas({
                               </span>
                               <span className="text-muted-foreground">
                                 {resolvedTotalCurrent &&
-                                resolvedTotalCurrent > 0
+                                  resolvedTotalCurrent > 0
                                   ? fmtPct(
-                                      ((value as number) /
-                                        resolvedTotalCurrent) *
-                                        100
-                                    )
+                                    ((value as number) /
+                                      resolvedTotalCurrent) *
+                                    100
+                                  )
                                   : "-"}
                               </span>
                             </div>
@@ -1830,10 +1830,10 @@ function BrokerCanvas({
                         >
                           {resolvedTotalInvested && resolvedTotalInvested > 0
                             ? fmtPct(
-                                ((resolvedOverallGain ?? 0) /
-                                  resolvedTotalInvested) *
-                                  100
-                              )
+                              ((resolvedOverallGain ?? 0) /
+                                resolvedTotalInvested) *
+                              100
+                            )
                             : "-"}
                         </Badge>
                       </TableCell>
@@ -1988,7 +1988,7 @@ function App() {
   )
   const selectedConnectedBrokerId =
     selectedConnectedBroker &&
-    connectedBrokerIds.includes(selectedConnectedBroker)
+      connectedBrokerIds.includes(selectedConnectedBroker)
       ? selectedConnectedBroker
       : (connectedBrokerIds.at(0) ?? null)
   const isBrokerConnected = selectedConnectedBrokerId !== null
@@ -2182,8 +2182,7 @@ function App() {
         setActiveView("chat")
       }
       toast.success(
-        `${
-          brokerToDisconnect === "angel-one" ? "Angel One" : "Groww"
+        `${brokerToDisconnect === "angel-one" ? "Angel One" : "Groww"
         } disconnected`
       )
     } catch (caughtError) {
@@ -2311,8 +2310,7 @@ function App() {
             setActiveView("chat")
           }
           toast.error(
-            `Broker session expired. Please reconnect ${
-              brokerToLoad === "angel-one" ? "Angel One" : "Groww"
+            `Broker session expired. Please reconnect ${brokerToLoad === "angel-one" ? "Angel One" : "Groww"
             }.`
           )
           return
@@ -2798,8 +2796,7 @@ function App() {
       const response = await uploadAssets({ attachments: payload })
       await loadAssets()
       setComposerNotice(
-        `Stored ${response.items.length} asset${
-          response.items.length === 1 ? "" : "s"
+        `Stored ${response.items.length} asset${response.items.length === 1 ? "" : "s"
         } in Sources.`
       )
     } catch (caughtError) {
@@ -2942,9 +2939,9 @@ function App() {
               currentMessages.map((message) =>
                 message.id === optimisticAssistantMessage.id
                   ? {
-                      ...message,
-                      content: `${message.content}${chunk}`,
-                    }
+                    ...message,
+                    content: `${message.content}${chunk}`,
+                  }
                   : message.id === optimisticUserMessage.id
                     ? { ...message, isPending: false }
                     : message
@@ -3436,7 +3433,7 @@ function App() {
                                         "flex flex-col items-center gap-2 rounded-xl border px-3 py-3 transition-colors",
                                         "border-border/70 bg-muted/30",
                                         isSelected &&
-                                          "border-foreground/30 bg-background shadow-xs ring-2 ring-foreground/5"
+                                        "border-foreground/30 bg-background shadow-xs ring-2 ring-foreground/5"
                                       )}
                                       onClick={() => {
                                         setSelectedBroker(broker.id)
@@ -3448,8 +3445,13 @@ function App() {
                                           {fallback}
                                         </AvatarFallback>
                                       </Avatar>
-                                      <div className="truncate text-sm font-medium text-foreground">
-                                        {broker.name}
+                                      <div className="flex flex-col items-center gap-1">
+                                        <div className="truncate text-sm font-medium text-foreground">
+                                          {broker.name}
+                                        </div>
+                                        {broker.id === "kite" && (
+                                          <Badge variant="secondary">Coming soon</Badge>
+                                        )}
                                       </div>
                                     </button>
                                   )
@@ -3625,7 +3627,7 @@ function App() {
                                     disabled={
                                       !selectedBrokerCard.isAvailable ||
                                       selectedBrokerStatus?.is_active ===
-                                        true ||
+                                      true ||
                                       isBrokerStatusLoading
                                     }
                                   >
@@ -3811,7 +3813,9 @@ function App() {
                             <Skeleton className="h-20 w-full" />
                           </div>
                         ) : (
-                          mcpProviders.map((provider) => {
+                          mcpProviders
+                            .filter((p) => p.provider !== "github")
+                            .map((provider) => {
                             const connection = mcpConnectionByProvider.get(
                               provider.provider
                             )
@@ -3838,12 +3842,19 @@ function App() {
                                       )}
                                     </div>
                                     <div className="flex min-w-0 flex-col gap-0.5">
-                                      <label
-                                        htmlFor={switchId}
-                                        className="text-sm font-semibold text-foreground"
-                                      >
-                                        {provider.label}
-                                      </label>
+                                      <div className="flex items-center gap-2">
+                                        <label
+                                          htmlFor={switchId}
+                                          className="text-sm font-semibold text-foreground"
+                                        >
+                                          {provider.label}
+                                        </label>
+                                        {provider.provider === "zerodha" ? (
+                                          <Badge className="text-xs" variant="outline">
+                                            Coming soon
+                                          </Badge>
+                                        ) : null}
+                                      </div>
                                       <div className="line-clamp-1 text-sm text-muted-foreground">
                                         {provider.description}
                                       </div>
@@ -3852,8 +3863,9 @@ function App() {
                                   <Switch
                                     id={switchId}
                                     checked={isConnected}
-                                    disabled={isBusy}
+                                    disabled={isBusy || provider.provider === "zerodha"}
                                     onCheckedChange={(checked) => {
+                                      if (provider.provider === "zerodha") return
                                       void handleMcpProviderToggle(
                                         provider,
                                         checked
@@ -4558,7 +4570,7 @@ function App() {
                 </div>
 
                 <p className="text-center text-xs text-muted-foreground">
-                  Chat can make mistakes. Check important info.
+                  Quama can make mistakes. Check important info.
                 </p>
               </div>
             </div>

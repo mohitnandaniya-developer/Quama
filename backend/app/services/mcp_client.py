@@ -118,19 +118,7 @@ def _mock_tools(provider: str) -> list[MCPToolMetadata]:
                 input_schema={"type": "object", "properties": {}},
             ),
         ]
-    if provider == "github":
-        return [
-            MCPToolMetadata(
-                name="list_repositories",
-                description="List repositories available to the connected account.",
-                input_schema={"type": "object", "properties": {}},
-            ),
-            MCPToolMetadata(
-                name="get_profile",
-                description="Return the connected GitHub profile summary.",
-                input_schema={"type": "object", "properties": {}},
-            ),
-        ]
+    # Only Zerodha mock tools are provided for now.
     raise MCPConnectionError(f"Unknown mock MCP provider: {provider}")
 
 
@@ -169,13 +157,5 @@ def _call_mock_tool(
         }
     if provider == "zerodha" and tool_name == "get_positions":
         return {"positions": [], "message": "No open positions in the mock account."}
-    if provider == "github" and tool_name == "list_repositories":
-        return {
-            "repositories": [
-                {"name": "quama", "visibility": "private", "open_prs": 2},
-                {"name": "trading-agents", "visibility": "private", "open_prs": 1},
-            ]
-        }
-    if provider == "github" and tool_name == "get_profile":
-        return {"login": "demo-user", "name": "Demo User", "private_repos": 2}
+    # No GitHub mock responses — only Zerodha is supported by the mock transport.
     raise MCPToolNotFoundError(f"Tool {tool_name} is not available for {provider}.")

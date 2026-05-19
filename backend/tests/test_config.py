@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from app.config import Settings
 
-
 def test_database_url_normalizes_render_postgres_urls() -> None:
     """Render-style Postgres URLs should use the async SQLAlchemy driver."""
     settings = Settings(

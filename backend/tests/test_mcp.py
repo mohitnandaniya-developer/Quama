@@ -19,7 +19,6 @@ async def test_mcp_provider_connection_discovers_tools(
     providers = providers_response.json()
     assert {provider["provider"] for provider in providers} == {
         "zerodha",
-        "github",
         "newsapi",
     }
 
@@ -88,7 +87,7 @@ async def test_agent_query_lists_tools_when_no_tool_matches(
     await client.post(
         "/api/v1/mcp/connections",
         headers=user_headers,
-        json={"provider": "github", "transport": "mock"},
+        json={"provider": "zerodha", "transport": "mock"},
     )
 
     response = await client.post(
@@ -99,5 +98,5 @@ async def test_agent_query_lists_tools_when_no_tool_matches(
 
     assert response.status_code == 200
     payload = response.json()
-    assert "github.list_repositories" in payload["answer"]
+    assert "zerodha.get_portfolio" in payload["answer"]
     assert payload["tool_calls"] == []

@@ -28,7 +28,7 @@ class MCPAgentService:
         ]
         if not tools:
             return AgentQueryResponse(
-                answer="No MCP tools are connected. Connect Zerodha or GitHub first.",
+                answer="No MCP tools are connected. Connect Zerodha first.",
                 available_tools=[],
             )
 
@@ -76,10 +76,7 @@ class MCPAgentService:
             ranked_tool_names.extend(["get_portfolio", "get_holdings"])
         if "position" in normalized:
             ranked_tool_names.append("get_positions")
-        if any(term in normalized for term in ("repo", "repository", "repositories")):
-            ranked_tool_names.append("list_repositories")
-        if any(term in normalized for term in ("profile", "account")):
-            ranked_tool_names.append("get_profile")
+        # Repository/profile queries are not supported (GitHub removed).
         if any(term in normalized for term in ("tool", "tools", "capabilities")):
             return None
 
@@ -106,11 +103,5 @@ class MCPAgentService:
                     f"Zerodha portfolio: {currency} {total} total value across "
                     f"{holding_count} holdings."
                 )
-        if provider == "github" and tool_name == "list_repositories":
-            if isinstance(result, dict) and isinstance(
-                result.get("repositories"),
-                list,
-            ):
-                repos = [str(item.get("name")) for item in result["repositories"]]
-                return f"GitHub repositories: {', '.join(repos)}."
+        # GitHub tool summaries removed — default to generic formatting.
         return f"{provider}.{tool_name} returned: {json.dumps(result, default=str)}"
