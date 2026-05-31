@@ -308,13 +308,22 @@ async function apiRequest<T>(
   let response: Response
 
   try {
-    response = await fetch(`${getApiBaseUrl()}${path}`, {
-      ...init,
-      headers,
-    })
+    // Add 45s timeout to fetch requests
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 45000)
+
+    try {
+      response = await fetch(`${getApiBaseUrl()}${path}`, {
+        ...init,
+        headers,
+        signal: controller.signal,
+      })
+    } finally {
+      clearTimeout(timeoutId)
+    }
   } catch (error) {
     if (isAbortError(error)) {
-      throw error
+      throw createNetworkError()
     }
 
     throw createNetworkError()

@@ -74,12 +74,23 @@ class BrokerSessionService:
         client = self._create_angel_one_client()
 
         try:
-            session_payload = await asyncio.to_thread(
-                client.generateSession,
-                client_code,
-                password,
-                totp,
+            session_payload = await asyncio.wait_for(
+                asyncio.to_thread(
+                    client.generateSession,
+                    client_code,
+                    password,
+                    totp,
+                ),
+                timeout=30.0,  # 30s timeout for Angel One auth
             )
+        except TimeoutError:
+            logger.warning(
+                "Angel One generateSession timed out for user %s",
+                user_id,
+            )
+            raise BrokerAuthError(
+                "Angel One authentication timed out. Please try again."
+            ) from None
         except Exception as exc:  # pragma: no cover - depends on SDK/network.
             raise map_broker_auth_error(exc) from exc
 
