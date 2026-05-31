@@ -71,8 +71,13 @@ Set at least these backend environment variables in Render:
 DATABASE_URL=<your Render Postgres internal or external database URL>
 BROKER_TOKEN_SECRET=<a Fernet key>
 ALLOWED_ORIGINS=<your frontend origin>
+CLERK_AUTHORIZED_PARTIES=<your frontend origin>
 DEBUG=false
 ```
+
+`ALLOWED_ORIGINS` and `CLERK_AUTHORIZED_PARTIES` accept comma-delimited origins.
+Use origins only, such as `https://quama.example.com`, without a trailing path.
+Restart the Render service after changing them.
 
 Render/Postgres URLs such as `postgresql://...` and `postgres://...` are
 normalized automatically to SQLAlchemy's async driver format at startup.
@@ -82,6 +87,23 @@ Generate `BROKER_TOKEN_SECRET` with:
 ```bash
 python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 ```
+
+## Deploy Frontend On Vercel
+
+Set these frontend environment variables in Vercel before rebuilding:
+
+```bash
+VITE_API_BASE_URL=https://<your Render backend hostname>
+VITE_CLERK_PUBLISHABLE_KEY=<your Clerk publishable key>
+CLERK_SECRET_KEY=<your Clerk secret key>
+```
+
+Do not add the local backend port `8000` to the Render URL. Browser requests from
+the deployed frontend also require that exact frontend origin in the backend
+Render service's `ALLOWED_ORIGINS` value.
+
+`CLERK_SECRET_KEY` is required by the frontend server middleware. Keep it
+server-side only: do not prefix it with `VITE_`.
 
 ## Quality Checks
 

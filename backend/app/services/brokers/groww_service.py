@@ -15,10 +15,15 @@ from app.core.exceptions import (
 from app.schemas.broker import BrokerConnectResponse
 from app.services.broker_session_service import GROWW_BROKER, BrokerSessionService
 from app.services.brokers.base import BaseBrokerService
+from app.services.portfolio_history import resolve_portfolio_history_window
 from app.services.portfolio_sync_service import PortfolioSyncService
 
 logger = logging.getLogger(__name__)
 GROWW_LTP_BATCH_SIZE = 50
+GROWW_HISTORY_MAX_CHUNK_DAYS = 180
+GROWW_HISTORY_START_YEAR = 2020
+GROWW_HISTORY_RETRY_ATTEMPTS = 2
+GROWW_HISTORY_TIMEOUT_SECONDS = 15
 
 SYMBOL_KEYS = (
     "trading_symbol",
@@ -190,14 +195,34 @@ class GrowwBrokerService(BaseBrokerService):
         trigger: str,
         force_refresh: bool,
     ) -> dict[str, Any]:
-        """Return a normalized Groww portfolio snapshot."""
+        """Return a normalized Groww portfolio snapshot with timeout protection."""
         del force_refresh
-        holdings = await self.get_holdings(user_id=user_id, trigger=trigger)
-        positions = await self.get_positions(user_id=user_id, trigger=trigger)
-        funds = await self.get_funds(user_id=user_id, trigger=trigger)
-        performance_history = await self._build_performance_history(
-            user_id=user_id,
+        try:
+            holdings = await asyncio.wait_for(
+                self.get_holdings(user_id=user_id, trigger=trigger),
+                timeout=15.0,
+            )
+            positions = await asyncio.wait_for(
+                self.get_positions(user_id=user_id, trigger=trigger),
+                timeout=10.0,
+            )
+            funds = await asyncio.wait_for(
+                self.get_funds(user_id=user_id, trigger=trigger),
+                timeout=10.0,
+            )
+        except TimeoutError:
+            logger.warning(
+                "Groww get_portfolio timeout for user %s",
+                user_id,
+            )
+            raise PortfolioSyncError(
+                "Groww portfolio request timed out. Please try again."
+            ) from None
+
+        summary = PortfolioSyncService._build_portfolio_totals(
             holdings=holdings,
+            positions=positions,
+            funds=funds,
         )
 
         now = datetime.now(UTC).isoformat()
@@ -209,12 +234,8 @@ class GrowwBrokerService(BaseBrokerService):
             "holdings": holdings,
             "positions": positions,
             "funds": funds,
-            "performance_history": performance_history,
-            "summary": PortfolioSyncService._build_portfolio_totals(
-                holdings=holdings,
-                positions=positions,
-                funds=funds,
-            ),
+            "performance_history": self._build_live_performance_history(summary),
+            "summary": summary,
         }
 
     async def get_holdings(
@@ -224,13 +245,25 @@ class GrowwBrokerService(BaseBrokerService):
         trigger: str,
         force_refresh: bool = False,
     ) -> list[dict[str, Any]]:
-        """Return current Groww holdings."""
+        """Return current Groww holdings with timeout protection."""
         del trigger, force_refresh
-        payload = await self._request_groww_json(
-            user_id=user_id,
-            path="/holdings/user",
-            operation="holdings",
-        )
+        try:
+            payload = await asyncio.wait_for(
+                self._request_groww_json(
+                    user_id=user_id,
+                    path="/holdings/user",
+                    operation="holdings",
+                ),
+                timeout=10.0,
+            )
+        except TimeoutError:
+            logger.warning(
+                "Groww get_holdings timeout for user %s after 10 seconds",
+                user_id,
+            )
+            raise PortfolioSyncError(
+                "Groww holdings request timed out. Please try again."
+            ) from None
         raw_holdings = self._extract_payload_list(payload, "holdings")
         ltp_by_symbol = await self._fetch_ltp_map(
             user_id=user_id,
@@ -311,23 +344,51 @@ class GrowwBrokerService(BaseBrokerService):
         path: str,
         operation: str,
     ) -> dict[str, Any]:
+        """Make a request to Groww API with timeout protection."""
         token = await self.broker_session_service.get_jwt(
             user_id=user_id,
             broker=self.broker_name,
         )
         client = self._create_groww_client(token)
+
+        # Determine timeout based on operation
+        operation_timeout = 8.0  # Default timeout
+        if path == "/holdings/user":
+            operation_timeout = 10.0
+        elif path == "/margins/detail/user":
+            operation_timeout = 5.0
+
         try:
             if path == "/holdings/user":
-                payload = await asyncio.to_thread(
-                    client.get_holdings_for_user,
-                    timeout=5,
+                payload = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        client.get_holdings_for_user,
+                        timeout=5,
+                    ),
+                    timeout=operation_timeout,
                 )
             elif path == "/positions/user":
-                payload = await asyncio.to_thread(client.get_positions_for_user)
+                payload = await asyncio.wait_for(
+                    asyncio.to_thread(client.get_positions_for_user),
+                    timeout=operation_timeout,
+                )
             elif path == "/margins/detail/user":
-                payload = await asyncio.to_thread(client.get_available_margin_details)
+                payload = await asyncio.wait_for(
+                    asyncio.to_thread(client.get_available_margin_details),
+                    timeout=operation_timeout,
+                )
             else:
                 raise PortfolioSyncError(f"Unsupported Groww {operation} request.")
+        except TimeoutError:
+            logger.warning(
+                "Groww %s request timeout after %.1f seconds for user %s",
+                operation,
+                operation_timeout,
+                user_id,
+            )
+            raise PortfolioSyncError(
+                f"Groww {operation} request timed out. Please try again."
+            ) from None
         except (BrokerAuthError, PortfolioSyncError):
             raise
         except Exception as exc:
@@ -451,7 +512,7 @@ class GrowwBrokerService(BaseBrokerService):
             if exchange_symbol not in missing_lookup:
                 continue
 
-            trading_symbol = self._groww_symbol_for_holding(holding)
+            trading_symbol = self._trading_symbol_for_holding(holding)
             if not trading_symbol:
                 continue
 
@@ -484,128 +545,113 @@ class GrowwBrokerService(BaseBrokerService):
         return values
 
     async def get_history(self, user_id: str, period: str) -> list[dict[str, Any]]:
-        now = datetime.now(UTC)
-        end_at = now
-
-        if period == "1h" or period == "1H":
-            interval_str = "5m"
-            start_at = end_at - timedelta(hours=1)
-        elif period == "1d" or period == "1D":
-            interval_str = "15m"
-            start_at = end_at - timedelta(days=1)
-        elif period == "1m" or period == "1M":
-            interval_str = "1day"
-            start_at = end_at - timedelta(days=30)
-        else:
-            interval_str = "1day"
-            start_at = end_at - timedelta(days=365)
-
-        holdings_payload = await self.get_portfolio(
-            user_id=user_id,
-            trigger="user_action",
-        )
-        holdings = holdings_payload.get("holdings", [])
-        if not holdings:
-            return []
-
-        total_invested = 0.0
-        for h in holdings:
-            qty = self._pick_number(h, QUANTITY_KEYS) or 0.0
-            avg = (
-                self._pick_number(
-                    h,
-                    ["average_price", "averagePrice", "avg_price", "costPrice"],
-                )
-                or 0.0
+        """Fetch historical portfolio performance for the given period."""
+        try:
+            window = resolve_portfolio_history_window(
+                period,
+                end_at=datetime.now(UTC),
             )
-            total_invested += qty * avg
 
-        weighted_history: dict[str, float] = {}
-        token = await self.broker_session_service.get_jwt(
-            user_id=user_id,
-            broker=self.broker_name,
-        )
-        client = self._create_groww_client(token)
-        semaphore = asyncio.Semaphore(4)
+            if window.period == "1H":
+                interval_str = "5minute"
+            elif window.period == "1D":
+                interval_str = "10minute"
+            elif window.period in {"5Y", "ALL"}:
+                interval_str = "1week"
+            else:
+                interval_str = "1day"
 
-        async def fetch_holding_history(
-            holding: dict[str, Any],
-        ) -> tuple[float, Any] | None:
-            quantity = self._pick_number(holding, QUANTITY_KEYS) or 0.0
-            if quantity <= 0:
-                return None
-
-            groww_symbol = self._groww_symbol_for_holding(holding)
-            if not groww_symbol:
-                return None
-
-            try:
-                async with semaphore:
-                    payload = await asyncio.to_thread(
-                        client.get_historical_candles,
-                        "NSE",
-                        "CASH",
-                        groww_symbol,
-                        start_at.strftime("%Y-%m-%d %H:%M:%S"),
-                        end_at.strftime("%Y-%m-%d %H:%M:%S"),
-                        interval_str,
-                        timeout=5,
-                    )
-            except Exception:
-                return None
-            return quantity, payload
-
-        history_payloads = await asyncio.gather(
-            *(fetch_holding_history(holding) for holding in holdings)
-        )
-
-        for result in history_payloads:
-            if result is None:
-                continue
-            quantity, payload = result
-            for candle in self._extract_candles(payload):
-                candle_date = candle.get("date")
-                close = PortfolioSyncService._parse_numeric_value(candle.get("close"))
-                if not candle_date or close is None:
-                    continue
-
-                ts = candle.get("time") or candle.get("timestamp") or candle_date
-
-                weighted_history[str(ts)] = weighted_history.get(str(ts), 0.0) + (
-                    close * quantity
+            holdings = await self.get_holdings(
+                user_id=user_id,
+                trigger="user_action",
+            )
+            if not holdings:
+                logger.info(
+                    "Groww get_history: No holdings found for user %s period %s",
+                    user_id,
+                    period,
                 )
+                return []
 
+            summary = PortfolioSyncService._build_portfolio_totals(
+                holdings=holdings,
+                positions=[],
+                funds={},
+            )
+            total_invested = summary["investment"] or 0.0
+            current_total = summary["holdings_market_value"] or 0.0
+
+            weighted_history = await self._fetch_weighted_history(
+                user_id=user_id,
+                holdings=holdings,
+                start_at=window.start_at,
+                end_at=window.end_at,
+                interval_str=interval_str,
+            )
+
+            if current_total > 0:
+                weighted_history[window.end_at.isoformat()] = current_total
+
+            result = [
+                {
+                    "date": str(ts),
+                    "value": round(value, 2),
+                    "invested": round(total_invested, 2),
+                }
+                for ts, value in sorted(weighted_history.items())
+            ]
+            logger.info(
+                "Groww get_history: Returning %d data points for user %s period %s",
+                len(result),
+                user_id,
+                period,
+            )
+            return result
+        except Exception as exc:
+            logger.error(
+                "Groww get_history failed for user %s period %s: %s",
+                user_id,
+                period,
+                exc,
+                exc_info=True,
+            )
+            raise
+
+    @staticmethod
+    def _build_live_performance_history(
+        summary: dict[str, float | None],
+    ) -> list[dict[str, Any]]:
+        current_total = summary.get("holdings_market_value") or 0.0
+        if current_total <= 0:
+            return []
         return [
             {
-                "date": str(ts),
-                "value": round(value, 2),
-                "invested": round(total_invested, 2),
+                "date": datetime.now(UTC).date().isoformat(),
+                "value": round(current_total, 2),
             }
-            for ts, value in sorted(weighted_history.items())
         ]
 
-    async def _build_performance_history(
+    async def _fetch_weighted_history(
         self,
         *,
         user_id: str,
         holdings: list[dict[str, Any]],
-    ) -> list[dict[str, Any]]:
-        if not holdings:
-            return []
-
+        start_at: datetime,
+        end_at: datetime,
+        interval_str: str,
+    ) -> dict[str, float]:
         weighted_history: dict[str, float] = {}
-        end_at = datetime.now(UTC)
-        start_at = end_at - timedelta(days=365)
         token = await self.broker_session_service.get_jwt(
             user_id=user_id,
             broker=self.broker_name,
         )
         client = self._create_groww_client(token)
         semaphore = asyncio.Semaphore(4)
+        history_chunks = self._history_chunks(start_at=start_at, end_at=end_at)
 
         async def fetch_holding_history(
             holding: dict[str, Any],
-        ) -> tuple[float, Any] | None:
+        ) -> tuple[float, list[Any]] | None:
             quantity = self._pick_number(holding, QUANTITY_KEYS) or 0.0
             if quantity <= 0:
                 return None
@@ -614,21 +660,39 @@ class GrowwBrokerService(BaseBrokerService):
             if not groww_symbol:
                 return None
 
-            try:
-                async with semaphore:
-                    payload = await asyncio.to_thread(
-                        client.get_historical_candles,
-                        "NSE",
-                        "CASH",
-                        groww_symbol,
-                        start_at.strftime("%Y-%m-%d %H:%M:%S"),
-                        end_at.strftime("%Y-%m-%d %H:%M:%S"),
-                        "1day",
-                        timeout=5,
-                    )
-            except Exception:
-                return None
-            return quantity, payload
+            exchange = self._exchange_for_holding(holding)
+            payloads: list[Any] = []
+            for chunk_start, chunk_end in history_chunks:
+                for attempt in range(1, GROWW_HISTORY_RETRY_ATTEMPTS + 1):
+                    try:
+                        async with semaphore:
+                            payload = await asyncio.to_thread(
+                                client.get_historical_candles,
+                                exchange,
+                                "CASH",
+                                groww_symbol,
+                                chunk_start.strftime("%Y-%m-%d %H:%M:%S"),
+                                chunk_end.strftime("%Y-%m-%d %H:%M:%S"),
+                                interval_str,
+                                timeout=GROWW_HISTORY_TIMEOUT_SECONDS,
+                            )
+                    except Exception as exc:
+                        logger.warning(
+                            "Groww candle fetch failed for %s from %s to %s "
+                            "(attempt %s/%s): %s",
+                            groww_symbol,
+                            chunk_start,
+                            chunk_end,
+                            attempt,
+                            GROWW_HISTORY_RETRY_ATTEMPTS,
+                            exc,
+                        )
+                        if attempt < GROWW_HISTORY_RETRY_ATTEMPTS:
+                            await asyncio.sleep(0.25)
+                        continue
+                    payloads.append(payload)
+                    break
+            return quantity, payloads
 
         history_payloads = await asyncio.gather(
             *(fetch_holding_history(holding) for holding in holdings)
@@ -636,41 +700,23 @@ class GrowwBrokerService(BaseBrokerService):
         for result in history_payloads:
             if result is None:
                 continue
-            quantity, payload = result
-            for candle in self._extract_candles(payload):
-                candle_date = candle.get("date")
-                close = PortfolioSyncService._parse_numeric_value(candle.get("close"))
-                if not candle_date or close is None:
-                    continue
+            quantity, payloads = result
+            holding_history: dict[str, float] = {}
+            for payload in payloads:
+                for candle in self._extract_candles(payload):
+                    candle_date = candle.get("date")
+                    close = PortfolioSyncService._parse_numeric_value(
+                        candle.get("close")
+                    )
+                    if not candle_date or close is None:
+                        continue
+                    holding_history[candle_date] = close
+            for candle_date, close in holding_history.items():
                 weighted_history[candle_date] = weighted_history.get(
                     candle_date, 0.0
                 ) + (close * quantity)
 
-        if not weighted_history and holdings:
-            current_total = sum(
-                PortfolioSyncService._parse_numeric_value(holding.get("current_value"))
-                or 0.0
-                for holding in holdings
-            )
-            if current_total > 0:
-                weighted_history[end_at.date().isoformat()] = current_total
-
-        current_total = sum(
-            PortfolioSyncService._parse_numeric_value(holding.get("current_value"))
-            or 0.0
-            for holding in holdings
-        )
-        today_key = end_at.date().isoformat()
-        if current_total > 0:
-            weighted_history[today_key] = current_total
-
-        return [
-            {
-                "date": day,
-                "value": round(value, 2),
-            }
-            for day, value in sorted(weighted_history.items())
-        ]
+        return weighted_history
 
     @staticmethod
     def _is_auth_error(exc: Exception) -> bool:
@@ -856,26 +902,51 @@ class GrowwBrokerService(BaseBrokerService):
         if explicit:
             return explicit.replace(":", "_").upper()
 
-        symbol = cls._pick_string(holding, SYMBOL_KEYS)
-        if not symbol:
+        trading_symbol = cls._trading_symbol_for_holding(holding)
+        if not trading_symbol:
             return None
-        normalized = cls._normalize_symbol_key(symbol)
-        if not normalized:
-            return None
-        if normalized.startswith(("NSE_", "BSE_")):
-            return normalized
         exchange = cls._exchange_for_holding(holding)
-        return f"{exchange}_{normalized}"
+        return f"{exchange}_{trading_symbol}"
 
     @classmethod
     def _groww_symbol_for_holding(cls, holding: dict[str, Any]) -> str | None:
-        symbol = cls._pick_string(holding, ("groww_symbol", "growwSymbol"))
-        if symbol:
-            return symbol.strip().upper()
-        symbol = cls._pick_string(holding, SYMBOL_KEYS)
+        trading_symbol = cls._trading_symbol_for_holding(holding)
+        if not trading_symbol:
+            return None
+        exchange = cls._exchange_for_holding(holding)
+        return f"{exchange}-{trading_symbol}"
+
+    @classmethod
+    def _trading_symbol_for_holding(cls, holding: dict[str, Any]) -> str | None:
+        symbol = cls._pick_string(
+            holding,
+            (*SYMBOL_KEYS, "groww_symbol", "growwSymbol"),
+        )
         if not symbol:
             return None
-        return cls._normalize_symbol_key(symbol).removeprefix("NSE_")
+        normalized = cls._normalize_symbol_key(symbol)
+        for prefix in ("NSE_", "BSE_", "NSE-", "BSE-"):
+            if normalized.startswith(prefix):
+                return normalized.removeprefix(prefix)
+        return normalized
+
+    @staticmethod
+    def _history_chunks(
+        *,
+        start_at: datetime,
+        end_at: datetime,
+    ) -> list[tuple[datetime, datetime]]:
+        earliest = datetime(GROWW_HISTORY_START_YEAR, 1, 1, tzinfo=start_at.tzinfo)
+        chunk_start = max(start_at, earliest)
+        chunks: list[tuple[datetime, datetime]] = []
+        while chunk_start < end_at:
+            chunk_end = min(
+                chunk_start + timedelta(days=GROWW_HISTORY_MAX_CHUNK_DAYS),
+                end_at,
+            )
+            chunks.append((chunk_start, chunk_end))
+            chunk_start = chunk_end
+        return chunks
 
     @classmethod
     def _exchange_for_holding(cls, holding: dict[str, Any]) -> str:
@@ -884,6 +955,15 @@ class GrowwBrokerService(BaseBrokerService):
             normalized = exchange.strip().upper()
             if normalized in {"NSE", "BSE"}:
                 return normalized
+        symbol = cls._pick_string(
+            holding,
+            (*SYMBOL_KEYS, "groww_symbol", "growwSymbol"),
+        )
+        if symbol:
+            normalized = cls._normalize_symbol_key(symbol)
+            for exchange in ("NSE", "BSE"):
+                if normalized.startswith((f"{exchange}_", f"{exchange}-")):
+                    return exchange
         return "NSE"
 
     @classmethod
@@ -967,10 +1047,10 @@ class GrowwBrokerService(BaseBrokerService):
     def _symbol_lookup_keys(cls, symbol: str) -> tuple[str, ...]:
         normalized = cls._normalize_symbol_key(symbol)
         without_exchange = normalized
-        if "_" in without_exchange:
-            maybe_exchange, maybe_symbol = without_exchange.split("_", 1)
-            if maybe_exchange in {"NSE", "BSE"}:
-                without_exchange = maybe_symbol
+        for prefix in ("NSE_", "BSE_", "NSE-", "BSE-"):
+            if without_exchange.startswith(prefix):
+                without_exchange = without_exchange.removeprefix(prefix)
+                break
         return tuple(
             key
             for key in (
@@ -979,6 +1059,8 @@ class GrowwBrokerService(BaseBrokerService):
                 without_exchange,
                 f"NSE_{without_exchange}",
                 f"NSE:{without_exchange}",
+                f"BSE_{without_exchange}",
+                f"BSE:{without_exchange}",
             )
             if key
         )
@@ -1007,7 +1089,9 @@ class GrowwBrokerService(BaseBrokerService):
 
     @classmethod
     def _extract_candles(cls, payload: Any) -> list[dict[str, Any]]:
-        source = payload.get("payload") if isinstance(payload, dict) else payload
+        source = (
+            payload.get("payload", payload) if isinstance(payload, dict) else payload
+        )
         if isinstance(source, dict):
             for key in ("candles", "data"):
                 inner = source.get(key)

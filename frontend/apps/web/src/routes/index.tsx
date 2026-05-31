@@ -56,12 +56,13 @@ import {
   ChartTooltipContent,
 } from "@workspace/ui/components/chart"
 import {
+  Area,
+  AreaChart,
   CartesianGrid,
   Cell,
   Line,
   Pie,
-  LineChart as RechartsLineChart,
-  PieChart as RechartsPieChart,
+  PieChart,
   XAxis,
   YAxis,
 } from "recharts"
@@ -142,6 +143,7 @@ import type {
 } from "@/lib/chat-api"
 import {
   ApiError,
+  canUseUserIdFallback,
   connectAngelOneBroker,
   connectGrowwBroker,
   connectMcpProvider,
@@ -157,7 +159,6 @@ import {
   fetchConversationDetail,
   fetchGrowwPortfolio,
   fetchModels,
-  getChatUserId,
   isAbortError,
   listAssets,
   listConversations,
@@ -224,18 +225,18 @@ interface SpeechRecognition extends EventTarget {
   lang: string
   onend: ((this: SpeechRecognition, event: Event) => void) | null
   onerror:
-  | ((this: SpeechRecognition, event: SpeechRecognitionErrorEvent) => void)
-  | null
+    | ((this: SpeechRecognition, event: SpeechRecognitionErrorEvent) => void)
+    | null
   onresult:
-  | ((this: SpeechRecognition, event: SpeechRecognitionEvent) => void)
-  | null
+    | ((this: SpeechRecognition, event: SpeechRecognitionEvent) => void)
+    | null
   start: () => void
   stop: () => void
   abort: () => void
 }
 
 interface SpeechRecognitionConstructor {
-  new(): SpeechRecognition
+  new (): SpeechRecognition
 }
 
 declare global {
@@ -316,22 +317,22 @@ const brokerCards: Array<{
   name: string
   isAvailable: boolean
 }> = [
-    {
-      id: "angel-one",
-      name: "Angel One",
-      isAvailable: true,
-    },
-    {
-      id: "kite",
-      name: "Kite",
-      isAvailable: false,
-    },
-    {
-      id: "groww",
-      name: "Groww",
-      isAvailable: true,
-    },
-  ]
+  {
+    id: "angel-one",
+    name: "Angel One",
+    isAvailable: true,
+  },
+  {
+    id: "kite",
+    name: "Kite",
+    isAvailable: false,
+  },
+  {
+    id: "groww",
+    name: "Groww",
+    isAvailable: true,
+  },
+]
 
 function fromApiBrokerName(broker: string): BrokerOption | null {
   switch (broker) {
@@ -534,8 +535,16 @@ function toApiError(error: unknown) {
   })
 }
 
+function isAuthenticationError(error: ApiError) {
+  return error.status === 401 || error.code === "authentication_failed"
+}
+
+function getVisibleApiErrorMessage(error: ApiError) {
+  return isAuthenticationError(error) ? null : error.message
+}
+
 function getErrorPresentation(error: ApiError | null) {
-  if (!error) {
+  if (!error || isAuthenticationError(error)) {
     return null
   }
 
@@ -761,6 +770,10 @@ type PerformancePoint = {
   invested?: number
   sortKey: number
 }
+
+const PORTFOLIO_HISTORY_PERIODS = ["1M", "6M", "1Y", "3Y", "5Y", "All"] as const
+type PortfolioHistoryPeriod = (typeof PORTFOLIO_HISTORY_PERIODS)[number]
+const INR_SYMBOL = "\u20b9"
 
 function _pickNum(
   h: Record<string, unknown>,
@@ -999,9 +1012,9 @@ function normalizePerformancePoint(
   return {
     date: isValidDate
       ? parsed.toLocaleDateString("en-US", {
-        month: "short",
-        day: "numeric",
-      })
+          month: "short",
+          day: "numeric",
+        })
       : rawDate,
     value,
     invested,
@@ -1168,9 +1181,8 @@ function BrokerCanvas({
   brokerName,
 }: BrokerCanvasProps) {
   const [pnlSortDir, setPnlSortDir] = React.useState<"asc" | "desc">("desc")
-  const [chartPeriod, setChartPeriod] = React.useState<
-    "1H" | "1D" | "1M" | "1Y"
-  >("1M")
+  const [chartPeriod, setChartPeriod] =
+    React.useState<PortfolioHistoryPeriod>("1Y")
 
   const holdingRows = React.useMemo<Array<HoldingRow>>(() => {
     const rows = holdings
@@ -1313,30 +1325,17 @@ function BrokerCanvas({
 
     return allPoints.map((p) => {
       let displayDate = p.date
-      if (chartPeriod === "1H" || chartPeriod === "1D") {
-        try {
-          const parsed = new Date(p.sortKey)
-          if (!isNaN(parsed.getTime())) {
-            displayDate = parsed.toLocaleTimeString("en-US", {
-              hour: "numeric",
-              minute: "2-digit",
-            })
-          }
-        } catch {
-          displayDate = p.date
+      try {
+        const parsed = new Date(p.sortKey)
+        if (!isNaN(parsed.getTime())) {
+          displayDate = parsed.toLocaleDateString("en-IN", {
+            month: "short",
+            day: "numeric",
+            year: chartPeriod === "1M" ? undefined : "numeric",
+          })
         }
-      } else {
-        try {
-          const parsed = new Date(p.sortKey)
-          if (!isNaN(parsed.getTime())) {
-            displayDate = parsed.toLocaleDateString("en-IN", {
-              month: "short",
-              day: "numeric",
-            })
-          }
-        } catch {
-          displayDate = p.date
-        }
+      } catch {
+        displayDate = p.date
       }
       const pointInvested = p.invested ?? invested
       return {
@@ -1348,7 +1347,12 @@ function BrokerCanvas({
     })
   }, [historyData, chartPeriod, resolvedTotalInvested, resolvedTotalCurrent])
 
-  const isPositivePnl = (resolvedOverallGain ?? 0) >= 0
+  const overallGain = resolvedOverallGain ?? 0
+  const isPositivePnl = overallGain >= 0
+  const overallGainPercentage =
+    resolvedTotalInvested && resolvedTotalInvested > 0
+      ? (overallGain / resolvedTotalInvested) * 100
+      : 0
 
   const fmt = (v: number | null) => formatBrokerCurrency(v)
   const fmtPct = (v: number) => `${v >= 0 ? "+" : ""}${v.toFixed(2)}%`
@@ -1459,9 +1463,9 @@ function BrokerCanvas({
                   <TrendingUp data-icon="inline-start" />
                   {resolvedTotalInvested && resolvedTotalInvested > 0
                     ? fmtPct(
-                      ((resolvedOverallGain ?? 0) / resolvedTotalInvested) *
-                      100
-                    )
+                        ((resolvedOverallGain ?? 0) / resolvedTotalInvested) *
+                          100
+                      )
                     : "Unrealised gain"}
                 </Badge>
               ) : (
@@ -1469,9 +1473,9 @@ function BrokerCanvas({
                   <TrendingDown data-icon="inline-start" />
                   {resolvedTotalInvested && resolvedTotalInvested > 0
                     ? fmtPct(
-                      ((resolvedOverallGain ?? 0) / resolvedTotalInvested) *
-                      100
-                    )
+                        ((resolvedOverallGain ?? 0) / resolvedTotalInvested) *
+                          100
+                      )
                     : "Unrealised loss"}
                 </Badge>
               )}
@@ -1501,37 +1505,67 @@ function BrokerCanvas({
 
         <div className="grid grid-cols-1 gap-5 xl:grid-cols-3">
           <Card className="xl:col-span-2">
-            <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <CardHeader className="pb-2">
               <div className="space-y-1">
                 <CardTitle>Portfolio Value</CardTitle>
                 <CardDescription>
                   Invested amount vs current market value
                 </CardDescription>
               </div>
-              <div className="flex items-center gap-1 text-xs">
-                {(["1H", "1D", "1M", "1Y"] as const).map((p) => (
-                  <button
-                    key={p}
-                    onClick={() => setChartPeriod(p)}
-                    className={[
-                      "rounded px-2 py-1 font-medium transition-colors",
-                      chartPeriod === p
-                        ? "bg-primary text-primary-foreground"
-                        : "text-muted-foreground hover:text-foreground",
-                    ].join(" ")}
-                  >
-                    {p}
-                  </button>
-                ))}
-              </div>
             </CardHeader>
-            <CardContent>
+            <CardContent className="space-y-2">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                    <span>Current</span>
+                    <span className="size-2 rounded-[3px] bg-indigo-500" />
+                  </div>
+                  {isPortfolioLoading ? (
+                    <Skeleton className="mt-2 h-9 w-36" />
+                  ) : (
+                    <>
+                      <p className="mt-0.5 text-lg font-semibold tracking-tight sm:text-xl">
+                        {INR_SYMBOL}
+                        {fmt(resolvedTotalCurrent)}
+                      </p>
+                      <p
+                        className={cn(
+                          "mt-0.5 text-xs font-medium",
+                          isPositivePnl
+                            ? "text-emerald-500"
+                            : "text-destructive"
+                        )}
+                      >
+                        {isPositivePnl ? "+" : "-"}
+                        {INR_SYMBOL}
+                        {fmt(Math.abs(overallGain))} (
+                        {Math.abs(overallGainPercentage).toFixed(2)}%)
+                      </p>
+                    </>
+                  )}
+                </div>
+                <div className="text-right">
+                  <div className="flex items-center justify-end gap-1.5 text-xs text-muted-foreground">
+                    <span className="size-2 rounded-[3px] bg-neutral-500" />
+                    <span>Invested</span>
+                  </div>
+                  {isPortfolioLoading ? (
+                    <Skeleton className="mt-2 ml-auto h-9 w-36" />
+                  ) : (
+                    <p className="mt-0.5 text-lg font-semibold tracking-tight sm:text-xl">
+                      {INR_SYMBOL}
+                      {fmt(resolvedTotalInvested)}
+                    </p>
+                  )}
+                </div>
+              </div>
+
               {isPortfolioLoading || isHistoryLoading ? (
-                <div className="flex h-[260px] items-center justify-center">
+                <div className="flex h-[190px] items-center justify-center">
                   <Skeleton className="h-full w-full" />
                 </div>
               ) : lineData.length === 0 ? (
-                <div className="flex h-[260px] flex-col items-center justify-center gap-2 text-center">
+                <div className="flex h-[190px] flex-col items-center justify-center gap-2 text-center">
                   <ChartCandlestick className="size-8 text-muted-foreground/40" />
                   <p className="text-sm text-muted-foreground">
                     No data for {chartPeriod} - try a longer period
@@ -1540,51 +1574,64 @@ function BrokerCanvas({
               ) : (
                 <ChartContainer
                   config={{
-                    current: { label: "Current Value", color: "#22c55e" },
-                    invested: { label: "Invested", color: "#94a3b8" },
+                    current: {
+                      label: "Portfolio Value",
+                      color: isPositivePnl ? "#16a34a" : "#dc2626",
+                    },
+                    invested: {
+                      label: "Invested Cost",
+                      color: "#a3a3a3",
+                    },
                   }}
-                  className="h-[260px] w-full"
+                  className="h-[210px] w-full"
                 >
-                  <RechartsLineChart
+                  <AreaChart
                     data={lineData}
-                    margin={{ top: 20, right: 20, left: 0, bottom: 0 }}
+                    margin={{ top: 8, right: 6, left: 6, bottom: 2 }}
                   >
+                    <defs>
+                      <linearGradient
+                        id="portfolio-fill"
+                        x1="0"
+                        y1="0"
+                        x2="0"
+                        y2="1"
+                      >
+                        <stop
+                          offset="4%"
+                          stopColor={isPositivePnl ? "#16a34a" : "#dc2626"}
+                          stopOpacity={0.28}
+                        />
+                        <stop
+                          offset="96%"
+                          stopColor={isPositivePnl ? "#16a34a" : "#dc2626"}
+                          stopOpacity={0.02}
+                        />
+                      </linearGradient>
+                    </defs>
                     <CartesianGrid
-                      strokeDasharray="3 3"
                       vertical={false}
-                      opacity={0.3}
+                      stroke="hsl(var(--border))"
+                      strokeDasharray="3 4"
+                      strokeOpacity={0.45}
                     />
-                    <XAxis
-                      dataKey="date"
-                      tickLine={false}
-                      axisLine={false}
-                      tickMargin={10}
-                      fontSize={11}
-                    />
-                    <YAxis
-                      tickFormatter={(val: number) => {
-                        if (val >= 10000000)
-                          return `Rs ${(val / 10000000).toFixed(1)}Cr`
-                        if (val >= 100000)
-                          return `Rs ${(val / 100000).toFixed(1)}L`
-                        if (val >= 1000) return `Rs ${(val / 1000).toFixed(0)}k`
-                        return `Rs ${val.toFixed(0)}`
-                      }}
-                      tickLine={false}
-                      axisLine={false}
-                      tickMargin={8}
-                      fontSize={11}
-                      width={68}
-                    />
+                    <XAxis dataKey="date" hide />
+                    <YAxis hide domain={["auto", "auto"]} />
                     <ChartTooltip
                       content={
                         <ChartTooltipContent
                           formatter={(value, name) => {
                             const v = value as number
                             const label =
-                              name === "current" ? "Current" : "Invested"
+                              name === "current"
+                                ? "Portfolio Value"
+                                : "Invested Cost"
                             const color =
-                              name === "current" ? "#22c55e" : "#94a3b8"
+                              name === "current"
+                                ? isPositivePnl
+                                  ? "#16a34a"
+                                  : "#dc2626"
+                                : "#a3a3a3"
                             return (
                               <div className="flex items-center gap-2">
                                 <span
@@ -1595,7 +1642,8 @@ function BrokerCanvas({
                                   {label}
                                 </span>
                                 <span className="ml-auto text-xs font-semibold">
-                                  Rs {formatBrokerCurrency(v)}
+                                  {INR_SYMBOL}
+                                  {formatBrokerCurrency(v)}
                                 </span>
                               </div>
                             )
@@ -1606,17 +1654,19 @@ function BrokerCanvas({
                     <Line
                       type="monotone"
                       dataKey="invested"
-                      stroke="#94a3b8"
-                      strokeWidth={2}
-                      strokeDasharray="5 4"
+                      stroke="#a3a3a3"
+                      strokeWidth={1.8}
+                      strokeDasharray="5 5"
                       dot={false}
-                      activeDot={{ r: 4, strokeWidth: 0 }}
+                      activeDot={{ r: 3, strokeWidth: 0 }}
+                      opacity={0.75}
                     />
-                    <Line
+                    <Area
                       type="monotone"
                       dataKey="current"
-                      stroke={isPositivePnl ? "#22c55e" : "#ef4444"}
-                      strokeWidth={3}
+                      stroke={isPositivePnl ? "#16a34a" : "#dc2626"}
+                      strokeWidth={2.5}
+                      fill="url(#portfolio-fill)"
                       dot={false}
                       activeDot={{
                         r: 5,
@@ -1624,9 +1674,28 @@ function BrokerCanvas({
                         strokeWidth: 0,
                       }}
                     />
-                  </RechartsLineChart>
+                  </AreaChart>
                 </ChartContainer>
               )}
+
+              <div className="flex items-center justify-between gap-1 pt-1">
+                {PORTFOLIO_HISTORY_PERIODS.map((period) => (
+                  <button
+                    key={period}
+                    type="button"
+                    onClick={() => setChartPeriod(period)}
+                    aria-pressed={chartPeriod === period}
+                    className={cn(
+                      "flex size-9 items-center justify-center rounded-full text-[11px] font-semibold transition-colors sm:size-10 sm:text-xs",
+                      chartPeriod === period
+                        ? "border border-foreground text-foreground"
+                        : "text-muted-foreground hover:text-foreground"
+                    )}
+                  >
+                    {period}
+                  </button>
+                ))}
+              </div>
             </CardContent>
           </Card>
 
@@ -1650,7 +1719,7 @@ function BrokerCanvas({
                   config={chartConfig}
                   className="mx-auto aspect-square max-h-[250px]"
                 >
-                  <RechartsPieChart>
+                  <PieChart>
                     <ChartTooltip
                       content={
                         <ChartTooltipContent
@@ -1663,12 +1732,12 @@ function BrokerCanvas({
                               </span>
                               <span className="text-muted-foreground">
                                 {resolvedTotalCurrent &&
-                                  resolvedTotalCurrent > 0
+                                resolvedTotalCurrent > 0
                                   ? fmtPct(
-                                    ((value as number) /
-                                      resolvedTotalCurrent) *
-                                    100
-                                  )
+                                      ((value as number) /
+                                        resolvedTotalCurrent) *
+                                        100
+                                    )
                                   : "-"}
                               </span>
                             </div>
@@ -1700,7 +1769,7 @@ function BrokerCanvas({
                       content={<ChartLegendContent nameKey="name" />}
                       className="mt-2 flex-wrap justify-center gap-x-4 gap-y-2"
                     />
-                  </RechartsPieChart>
+                  </PieChart>
                 </ChartContainer>
               )}
             </CardContent>
@@ -1830,10 +1899,10 @@ function BrokerCanvas({
                         >
                           {resolvedTotalInvested && resolvedTotalInvested > 0
                             ? fmtPct(
-                              ((resolvedOverallGain ?? 0) /
-                                resolvedTotalInvested) *
-                              100
-                            )
+                                ((resolvedOverallGain ?? 0) /
+                                  resolvedTotalInvested) *
+                                  100
+                              )
                             : "-"}
                         </Badge>
                       </TableCell>
@@ -1850,12 +1919,7 @@ function BrokerCanvas({
 }
 
 function App() {
-  const {
-    getToken,
-    isLoaded: isClerkLoaded,
-    isSignedIn,
-    userId: clerkUserId,
-  } = useAuth()
+  const { getToken, isLoaded: isClerkLoaded, isSignedIn } = useAuth()
   const { user } = useUser()
   const { sendStreamingMessage } = useStreamingChat()
   const [modelCatalog, setModelCatalog] = React.useState<
@@ -1957,7 +2021,9 @@ function App() {
   const speechFinalTranscriptRef = React.useRef("")
   const shouldKeepListeningRef = React.useRef(false)
   const sendLockRef = React.useRef(false)
+  const bootstrapVersionRef = React.useRef(0)
   const isAuthenticated = isClerkLoaded && isSignedIn === true
+  const canLoadUserData = isAuthenticated || canUseUserIdFallback()
   const profileDisplayName =
     user?.fullName || user?.username || user?.firstName || "Account"
 
@@ -1988,7 +2054,7 @@ function App() {
   )
   const selectedConnectedBrokerId =
     selectedConnectedBroker &&
-      connectedBrokerIds.includes(selectedConnectedBroker)
+    connectedBrokerIds.includes(selectedConnectedBroker)
       ? selectedConnectedBroker
       : (connectedBrokerIds.at(0) ?? null)
   const isBrokerConnected = selectedConnectedBrokerId !== null
@@ -2061,7 +2127,7 @@ function App() {
         return nextStatus
       } catch (caughtError) {
         const nextError = toApiError(caughtError)
-        setBrokerStatusError(nextError.message)
+        setBrokerStatusError(getVisibleApiErrorMessage(nextError))
         if (!silent) {
           throw nextError
         }
@@ -2131,7 +2197,7 @@ function App() {
       )
     } catch (caughtError) {
       const nextError = toApiError(caughtError)
-      setBrokerFormError(nextError.message)
+      setBrokerFormError(getVisibleApiErrorMessage(nextError))
     } finally {
       setIsBrokerConnecting(false)
     }
@@ -2182,12 +2248,13 @@ function App() {
         setActiveView("chat")
       }
       toast.success(
-        `${brokerToDisconnect === "angel-one" ? "Angel One" : "Groww"
+        `${
+          brokerToDisconnect === "angel-one" ? "Angel One" : "Groww"
         } disconnected`
       )
     } catch (caughtError) {
       const nextError = toApiError(caughtError)
-      setBrokerStatusError(nextError.message)
+      setBrokerStatusError(getVisibleApiErrorMessage(nextError))
     } finally {
       setIsBrokerDisconnecting(false)
     }
@@ -2206,7 +2273,7 @@ function App() {
       setMcpConnections(connectionsResponse.items)
     } catch (caughtError) {
       const nextError = toApiError(caughtError)
-      setMcpError(nextError.message)
+      setMcpError(getVisibleApiErrorMessage(nextError))
     } finally {
       setIsMcpLoading(false)
     }
@@ -2214,12 +2281,17 @@ function App() {
 
   const handleToolsDialogOpenChange = React.useCallback(
     (open: boolean) => {
+      if (open && !canLoadUserData) {
+        redirectToSignIn()
+        return
+      }
+
       setIsToolsDialogOpen(open)
       if (open) {
         void loadMcpTools()
       }
     },
-    [loadMcpTools]
+    [canLoadUserData, loadMcpTools, redirectToSignIn]
   )
 
   const handleMcpProviderToggle = React.useCallback(
@@ -2244,7 +2316,7 @@ function App() {
         setMcpConnections(connectionsResponse.items)
       } catch (caughtError) {
         const nextError = toApiError(caughtError)
-        setMcpError(nextError.message)
+        setMcpError(getVisibleApiErrorMessage(nextError))
       } finally {
         setMcpBusyProvider(null)
       }
@@ -2310,7 +2382,8 @@ function App() {
             setActiveView("chat")
           }
           toast.error(
-            `Broker session expired. Please reconnect ${brokerToLoad === "angel-one" ? "Angel One" : "Groww"
+            `Broker session expired. Please reconnect ${
+              brokerToLoad === "angel-one" ? "Angel One" : "Groww"
             }.`
           )
           return
@@ -2318,7 +2391,7 @@ function App() {
 
         setBrokerPortfolioSummary(null)
         setBrokerPortfolioHoldings([])
-        setBrokerPortfolioError(nextError.message)
+        setBrokerPortfolioError(getVisibleApiErrorMessage(nextError))
       } finally {
         if (!isCancelled) {
           setIsBrokerPortfolioLoading(false)
@@ -2351,25 +2424,50 @@ function App() {
       return
     }
 
+    const bootstrapVersion = ++bootstrapVersionRef.current
+    const isCurrentBootstrap = () =>
+      bootstrapVersion === bootstrapVersionRef.current
+
     async function bootstrap() {
-      if (!clerkUserId) {
-        getChatUserId()
-      }
       setIsBootstrapping(true)
       setError(null)
 
       try {
         const [modelsResponse, conversationsResponse] = await Promise.all([
           fetchModels(),
-          listConversations(),
+          canLoadUserData ? listConversations() : Promise.resolve(null),
         ])
+
+        if (!isCurrentBootstrap()) {
+          return
+        }
 
         const nextModelOptions = flattenModelOptions(modelsResponse.providers)
         const preferredModel = getPreferredModel(nextModelOptions)
 
         setModelCatalog(modelsResponse.providers)
-        await loadBrokerStatus({ silent: true })
         setSelectedModelKey(preferredModel ? preferredModel.key : "")
+
+        if (!conversationsResponse) {
+          loadConversationAbortRef.current?.abort()
+          setConversations([])
+          setCurrentConversationId(null)
+          setMessages([])
+          setAssets([])
+          setBrokerStatus({})
+          setSelectedConnectedBroker(null)
+          setBrokerPortfolioSummary(null)
+          setBrokerPortfolioHoldings([])
+          setMcpProviders([])
+          setMcpConnections([])
+          return
+        }
+
+        await loadBrokerStatus({ silent: true })
+        if (!isCurrentBootstrap()) {
+          return
+        }
+
         React.startTransition(() => {
           setConversations(conversationsResponse.items)
         })
@@ -2379,17 +2477,23 @@ function App() {
           await loadConversation(firstConversation.id, nextModelOptions)
         }
       } catch (caughtError) {
-        if (isAbortError(caughtError)) {
+        if (!isCurrentBootstrap() || isAbortError(caughtError)) {
           return
         }
         setError(toApiError(caughtError))
       } finally {
-        setIsBootstrapping(false)
+        if (isCurrentBootstrap()) {
+          setIsBootstrapping(false)
+        }
       }
     }
 
     void bootstrap()
-  }, [clerkUserId, isClerkLoaded, loadBrokerStatus])
+
+    return () => {
+      bootstrapVersionRef.current += 1
+    }
+  }, [canLoadUserData, isClerkLoaded, loadBrokerStatus])
 
   React.useEffect(() => {
     attachmentsRef.current = attachments
@@ -2757,6 +2861,11 @@ function App() {
   }
 
   async function handleAssetsDialogChange(open: boolean) {
+    if (open && !canLoadUserData) {
+      redirectToSignIn()
+      return
+    }
+
     setIsAssetsDialogOpen(open)
     if (!open) {
       return
@@ -2796,7 +2905,8 @@ function App() {
       const response = await uploadAssets({ attachments: payload })
       await loadAssets()
       setComposerNotice(
-        `Stored ${response.items.length} asset${response.items.length === 1 ? "" : "s"
+        `Stored ${response.items.length} asset${
+          response.items.length === 1 ? "" : "s"
         } in Sources.`
       )
     } catch (caughtError) {
@@ -2836,6 +2946,11 @@ function App() {
     const content = draft.trim()
     const pendingAttachments = attachments
     if ((!content && pendingAttachments.length === 0) || sendLockRef.current) {
+      return
+    }
+
+    if (!canLoadUserData) {
+      redirectToSignIn()
       return
     }
 
@@ -2939,9 +3054,9 @@ function App() {
               currentMessages.map((message) =>
                 message.id === optimisticAssistantMessage.id
                   ? {
-                    ...message,
-                    content: `${message.content}${chunk}`,
-                  }
+                      ...message,
+                      content: `${message.content}${chunk}`,
+                    }
                   : message.id === optimisticUserMessage.id
                     ? { ...message, isPending: false }
                     : message
@@ -3433,7 +3548,7 @@ function App() {
                                         "flex flex-col items-center gap-2 rounded-xl border px-3 py-3 transition-colors",
                                         "border-border/70 bg-muted/30",
                                         isSelected &&
-                                        "border-foreground/30 bg-background shadow-xs ring-2 ring-foreground/5"
+                                          "border-foreground/30 bg-background shadow-xs ring-2 ring-foreground/5"
                                       )}
                                       onClick={() => {
                                         setSelectedBroker(broker.id)
@@ -3450,7 +3565,9 @@ function App() {
                                           {broker.name}
                                         </div>
                                         {broker.id === "kite" && (
-                                          <Badge variant="secondary">Coming soon</Badge>
+                                          <Badge variant="secondary">
+                                            Coming soon
+                                          </Badge>
                                         )}
                                       </div>
                                     </button>
@@ -3627,7 +3744,7 @@ function App() {
                                     disabled={
                                       !selectedBrokerCard.isAvailable ||
                                       selectedBrokerStatus?.is_active ===
-                                      true ||
+                                        true ||
                                       isBrokerStatusLoading
                                     }
                                   >
@@ -3816,86 +3933,94 @@ function App() {
                           mcpProviders
                             .filter((p) => p.provider !== "github")
                             .map((provider) => {
-                            const connection = mcpConnectionByProvider.get(
-                              provider.provider
-                            )
-                            const isConnected = Boolean(connection)
-                            const isBusy = mcpBusyProvider === provider.provider
-                            const switchId = `mcp-${provider.provider}`
+                              const connection = mcpConnectionByProvider.get(
+                                provider.provider
+                              )
+                              const isConnected = Boolean(connection)
+                              const isBusy =
+                                mcpBusyProvider === provider.provider
+                              const switchId = `mcp-${provider.provider}`
 
-                            return (
-                              <div
-                                key={provider.provider}
-                                className="flex flex-col gap-3 rounded-2xl border border-border/70 bg-gradient-to-br from-muted/50 to-muted/20 px-4 py-4 transition-all hover:border-border/100"
-                              >
-                                <div className="flex items-center justify-between gap-3">
-                                  <div className="flex min-w-0 items-center gap-3">
-                                    <div className="flex size-12 shrink-0 items-center justify-center rounded-2xl border border-border/70 bg-background text-foreground shadow-sm">
-                                      {provider.provider === "github" ? (
-                                        <GitHubMark className="size-6" />
-                                      ) : provider.provider === "zerodha" ? (
-                                        <ZerodhaIcon className="size-6" />
-                                      ) : provider.provider === "newsapi" ? (
-                                        <Newspaper className="size-6" />
-                                      ) : (
-                                        <Handshake className="size-6" />
-                                      )}
+                              return (
+                                <div
+                                  key={provider.provider}
+                                  className="flex flex-col gap-3 rounded-2xl border border-border/70 bg-gradient-to-br from-muted/50 to-muted/20 px-4 py-4 transition-all hover:border-border/100"
+                                >
+                                  <div className="flex items-center justify-between gap-3">
+                                    <div className="flex min-w-0 items-center gap-3">
+                                      <div className="flex size-12 shrink-0 items-center justify-center rounded-2xl border border-border/70 bg-background text-foreground shadow-sm">
+                                        {provider.provider === "github" ? (
+                                          <GitHubMark className="size-6" />
+                                        ) : provider.provider === "zerodha" ? (
+                                          <ZerodhaIcon className="size-6" />
+                                        ) : provider.provider === "newsapi" ? (
+                                          <Newspaper className="size-6" />
+                                        ) : (
+                                          <Handshake className="size-6" />
+                                        )}
+                                      </div>
+                                      <div className="flex min-w-0 flex-col gap-0.5">
+                                        <div className="flex items-center gap-2">
+                                          <label
+                                            htmlFor={switchId}
+                                            className="text-sm font-semibold text-foreground"
+                                          >
+                                            {provider.label}
+                                          </label>
+                                          {provider.provider === "zerodha" ? (
+                                            <Badge
+                                              className="text-xs"
+                                              variant="outline"
+                                            >
+                                              Coming soon
+                                            </Badge>
+                                          ) : null}
+                                        </div>
+                                        <div className="line-clamp-1 text-sm text-muted-foreground">
+                                          {provider.description}
+                                        </div>
+                                      </div>
                                     </div>
-                                    <div className="flex min-w-0 flex-col gap-0.5">
-                                      <div className="flex items-center gap-2">
-                                        <label
-                                          htmlFor={switchId}
-                                          className="text-sm font-semibold text-foreground"
-                                        >
-                                          {provider.label}
-                                        </label>
-                                        {provider.provider === "zerodha" ? (
-                                          <Badge className="text-xs" variant="outline">
-                                            Coming soon
+                                    <Switch
+                                      id={switchId}
+                                      checked={isConnected}
+                                      disabled={
+                                        isBusy ||
+                                        provider.provider === "zerodha"
+                                      }
+                                      onCheckedChange={(checked) => {
+                                        if (provider.provider === "zerodha")
+                                          return
+                                        void handleMcpProviderToggle(
+                                          provider,
+                                          checked
+                                        )
+                                      }}
+                                      aria-label={`Toggle ${provider.label} MCP`}
+                                    />
+                                  </div>
+                                  {connection ? (
+                                    <div className="flex flex-col gap-2">
+                                      <div className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
+                                        Available Tools (
+                                        {connection.tools.length})
+                                      </div>
+                                      <div className="flex flex-wrap gap-2">
+                                        {connection.tools.map((tool) => (
+                                          <Badge
+                                            key={tool.name}
+                                            variant="secondary"
+                                            className="font-medium"
+                                          >
+                                            {tool.name}
                                           </Badge>
-                                        ) : null}
-                                      </div>
-                                      <div className="line-clamp-1 text-sm text-muted-foreground">
-                                        {provider.description}
+                                        ))}
                                       </div>
                                     </div>
-                                  </div>
-                                  <Switch
-                                    id={switchId}
-                                    checked={isConnected}
-                                    disabled={isBusy || provider.provider === "zerodha"}
-                                    onCheckedChange={(checked) => {
-                                      if (provider.provider === "zerodha") return
-                                      void handleMcpProviderToggle(
-                                        provider,
-                                        checked
-                                      )
-                                    }}
-                                    aria-label={`Toggle ${provider.label} MCP`}
-                                  />
+                                  ) : null}
                                 </div>
-                                {connection ? (
-                                  <div className="flex flex-col gap-2">
-                                    <div className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
-                                      Available Tools ({connection.tools.length}
-                                      )
-                                    </div>
-                                    <div className="flex flex-wrap gap-2">
-                                      {connection.tools.map((tool) => (
-                                        <Badge
-                                          key={tool.name}
-                                          variant="secondary"
-                                          className="font-medium"
-                                        >
-                                          {tool.name}
-                                        </Badge>
-                                      ))}
-                                    </div>
-                                  </div>
-                                ) : null}
-                              </div>
-                            )
-                          })
+                              )
+                            })
                         )}
                       </div>
                       <DialogFooter>
@@ -3937,9 +4062,7 @@ function App() {
                   {conversations.length === 0 ? (
                     <SidebarMenuItem>
                       <div className="px-2.5 py-2 text-sm text-muted-foreground">
-                        {isBootstrapping
-                          ? "Loading conversations..."
-                          : "No conversations yet."}
+                        No conversations yet.
                       </div>
                     </SidebarMenuItem>
                   ) : (
@@ -4176,27 +4299,54 @@ function App() {
         </AlertDialog>
 
         {activeView === "market" ? (
-          <MarketCanvas />
+          isBootstrapping ? (
+            <div className="flex min-h-0 flex-1 items-center justify-center">
+              <div className="flex flex-col items-center gap-4">
+                <LoaderCircle className="size-12 animate-spin text-muted-foreground" />
+                <p className="text-sm text-muted-foreground">
+                  Loading market view...
+                </p>
+              </div>
+            </div>
+          ) : (
+            <MarketCanvas />
+          )
         ) : activeView === "broker" ? (
-          <BrokerCanvas
-            summary={brokerPortfolioSummary}
-            holdings={brokerPortfolioHoldings}
-            isPortfolioLoading={isBrokerPortfolioLoading}
-            portfolioError={brokerPortfolioError}
-            onRetry={() => setBrokerRetryTrigger((n) => n + 1)}
-            brokerName={selectedConnectedBroker ?? "groww"}
-          />
+          isBootstrapping ? (
+            <div className="flex min-h-0 flex-1 items-center justify-center">
+              <div className="flex flex-col items-center gap-4">
+                <LoaderCircle className="size-12 animate-spin text-muted-foreground" />
+                <p className="text-sm text-muted-foreground">
+                  Loading broker view...
+                </p>
+              </div>
+            </div>
+          ) : (
+            <BrokerCanvas
+              summary={brokerPortfolioSummary}
+              holdings={brokerPortfolioHoldings}
+              isPortfolioLoading={isBrokerPortfolioLoading}
+              portfolioError={brokerPortfolioError}
+              onRetry={() => setBrokerRetryTrigger((n) => n + 1)}
+              brokerName={selectedConnectedBroker ?? "groww"}
+            />
+          )
         ) : (
           <>
             <main className="relative z-10 flex min-h-0 flex-1 flex-col">
               <div className="relative mx-auto flex min-h-0 w-full max-w-6xl flex-1 flex-col px-4 md:px-8">
                 <ScrollArea className="min-h-0 flex-1">
-                  {messages.length === 0 ? (
+                  {isBootstrapping ? (
+                    <div className="mx-auto flex min-h-[58vh] w-full max-w-2xl flex-col items-center justify-center gap-4 text-center">
+                      <LoaderCircle className="size-12 animate-spin text-muted-foreground" />
+                      <p className="text-sm text-muted-foreground">
+                        Loading your chat...
+                      </p>
+                    </div>
+                  ) : messages.length === 0 ? (
                     <div className="mx-auto flex min-h-[58vh] w-full max-w-2xl flex-col items-center justify-center gap-4 text-center">
                       <h1 className="text-4xl font-semibold tracking-tight text-foreground sm:text-5xl">
-                        {isBootstrapping
-                          ? "Connecting to the backend..."
-                          : "Where should we begin?"}
+                        Where should we begin?
                       </h1>
                       {errorPresentation ? (
                         <div className="flex w-full max-w-2xl items-start justify-between gap-3 rounded-2xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-start text-sm text-destructive">

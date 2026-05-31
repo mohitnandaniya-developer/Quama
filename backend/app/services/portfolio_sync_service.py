@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -29,6 +29,7 @@ from app.services.broker_session_service import (
     BrokerSessionService,
 )
 from app.services.cache_service import CacheService
+from app.services.portfolio_history import resolve_portfolio_history_window
 
 logger = logging.getLogger(__name__)
 PORTFOLIO_CACHE_SCHEMA = "quama.portfolio-snapshot.v1"
@@ -123,22 +124,74 @@ class PortfolioSyncService:
         self, user_id: str, broker: str, period: str
     ) -> list[dict[str, Any]]:
         """Fetch historical performance data for the requested period."""
-        if broker == GROWW_BROKER:
+        broker_key = broker.strip().lower().replace("-", "_")
+        logger.info(
+            "get_portfolio_history called for user %s broker %s period %s",
+            user_id,
+            broker_key,
+            period,
+        )
+
+        if broker_key == GROWW_BROKER:
             from app.services.brokers.groww_service import GrowwBrokerService
 
             service = GrowwBrokerService(
                 broker_session_service=self.broker_session_service,
             )
-            return await service.get_history(user_id=user_id, period=period)
-        if broker == ANGEL_ONE_BROKER:
-            return await self._build_angel_one_performance_history(
-                user_id=user_id, period=period
-            )
+            try:
+                history = await service.get_history(user_id=user_id, period=period)
+                logger.info(
+                    "Groww history returned %d data points for user %s period %s",
+                    len(history),
+                    user_id,
+                    period,
+                )
+                return history
+            except Exception as exc:
+                logger.error(
+                    "Groww history fetch failed for user %s period %s: %s",
+                    user_id,
+                    period,
+                    exc,
+                    exc_info=True,
+                )
+                raise
+
+        if broker_key == ANGEL_ONE_BROKER:
+            try:
+                history = await self._build_angel_one_performance_history(
+                    user_id=user_id, period=period
+                )
+                logger.info(
+                    "Angel One history returned %d data points for user %s period %s",
+                    len(history),
+                    user_id,
+                    period,
+                )
+                return history
+            except Exception as exc:
+                logger.error(
+                    "Angel One history fetch failed for user %s period %s: %s",
+                    user_id,
+                    period,
+                    exc,
+                    exc_info=True,
+                )
+                raise
+
+        logger.warning(
+            "Unknown broker %s for user %s period %s",
+            broker_key,
+            user_id,
+            period,
+        )
         return []
 
     async def _build_angel_one_performance_history(
         self, user_id: str, period: str
     ) -> list[dict[str, Any]]:
+        # Add delay to prevent racing with portfolio snapshot's holding() call
+        await asyncio.sleep(0.5)
         holdings_payload = await self._call_angel_one(
             user_id=user_id,
             fn_name="holding",
@@ -148,33 +201,33 @@ class PortfolioSyncService:
         if not holdings:
             return []
 
-        total_invested = sum(
-            (h.get("quantity", 0) or 0)
-            * (h.get("average_price") or h.get("averageprice") or 0)
-            for h in holdings
+        summary = self._build_portfolio_totals(
+            holdings=holdings,
+            positions=[],
+            funds={},
         )
+        total_invested = summary["investment"] or 0.0
+        current_total = summary["holdings_market_value"] or 0.0
 
-        now = datetime.now(UTC)
-        end_time = now
+        window = resolve_portfolio_history_window(
+            period,
+            end_at=datetime.now(UTC),
+        )
+        end_time = window.end_at
 
-        if period in ("1h", "1H"):
+        if window.period == "1H":
             interval = "ONE_MINUTE"
-            start_time = end_time - timedelta(hours=1)
-        elif period in ("1d", "1D"):
+        elif window.period == "1D":
             interval = "FIVE_MINUTE"
-            start_time = end_time - timedelta(days=1)
-        elif period in ("1m", "1M"):
+        else:
             interval = "ONE_DAY"
-            start_time = end_time - timedelta(days=30)
-        else:  # 1Y
-            interval = "ONE_DAY"
-            start_time = end_time - timedelta(days=365)
 
-        from_date = start_time.strftime("%Y-%m-%d %H:%M")
+        from_date = window.start_at.strftime("%Y-%m-%d %H:%M")
         to_date = end_time.strftime("%Y-%m-%d %H:%M")
 
         weighted_history: dict[str, float] = {}
-        semaphore = asyncio.Semaphore(4)
+        # Use semaphore of 1 to serialize getCandleData calls and avoid rate limiting
+        semaphore = asyncio.Semaphore(1)
 
         async def fetch_holding_history(
             holding: dict[str, Any],
@@ -197,6 +250,8 @@ class PortfolioSyncService:
                     "todate": to_date,
                 }
                 async with semaphore:
+                    # Add delay before each call to throttle requests
+                    await asyncio.sleep(0.5)
                     payload = await self._call_angel_one(
                         user_id=user_id,
                         fn_name="getCandleData",
@@ -228,6 +283,9 @@ class PortfolioSyncService:
                     timestamp_str, 0.0
                 ) + (close * quantity)
 
+        if current_total > 0:
+            weighted_history[end_time.isoformat()] = current_total
+
         return [
             {
                 "date": ts,
@@ -245,18 +303,25 @@ class PortfolioSyncService:
     ) -> dict[str, Any]:
         # Keep broker calls sequential so one forced token refresh cannot race
         # across concurrent requests on the same session.
+        # Add delays between calls to avoid hitting Angel One API rate limits
         holdings_payload = await self._call_angel_one(
             user_id=user_id,
             fn_name="holding",
         )
+        await asyncio.sleep(0.3)  # 300ms delay to avoid rate limiting
+
         positions_payload = await self._call_angel_one(
             user_id=user_id,
             fn_name="position",
         )
+        await asyncio.sleep(0.3)  # 300ms delay
+
         order_payload = await self._call_angel_one(
             user_id=user_id,
             fn_name="orderBook",
         )
+        await asyncio.sleep(0.3)  # 300ms delay
+
         try:
             funds_payload = await self._call_angel_one(
                 user_id=user_id,
@@ -280,7 +345,7 @@ class PortfolioSyncService:
         )
 
         performance_history = []
-        current_val = summary.get("current_value", 0)
+        current_val = summary.get("holdings_market_value") or 0
         if current_val > 0:
             performance_history.append(
                 {
@@ -306,15 +371,47 @@ class PortfolioSyncService:
 
     async def _call_angel_one(self, *, user_id: str, fn_name: str, **kwargs) -> Any:
         ensure_angel_one_configured(self.settings)
-        jwt_token = await self.broker_session_service.get_jwt(
-            user_id=user_id,
-            broker=ANGEL_ONE_BROKER,
-        )
-        payload = await self._execute_angel_one_call(
-            fn_name=fn_name,
-            jwt_token=jwt_token,
-            **kwargs,
-        )
+        try:
+            jwt_token = await self.broker_session_service.get_jwt(
+                user_id=user_id,
+                broker=ANGEL_ONE_BROKER,
+            )
+        except Exception as exc:
+            logger.error(
+                "Angel One get_jwt failed for user %s: %s",
+                user_id,
+                exc,
+                exc_info=True,
+            )
+            raise
+
+        try:
+            payload = await asyncio.wait_for(
+                self._execute_angel_one_call(
+                    fn_name=fn_name,
+                    jwt_token=jwt_token,
+                    **kwargs,
+                ),
+                timeout=35.0,  # 35s total (SDK 30s + overhead)
+            )
+        except TimeoutError:
+            logger.warning(
+                "Angel One %s call timeout for user %s after 20 seconds",
+                fn_name,
+                user_id,
+            )
+            raise BrokerAuthError(
+                f"Angel One {fn_name} request timed out. Please try again."
+            ) from None
+        except Exception as exc:
+            logger.error(
+                "Angel One %s API call failed for user %s: %s",
+                fn_name,
+                user_id,
+                exc,
+                exc_info=True,
+            )
+            raise
 
         if is_invalid_token_payload(payload):
             logger.warning(
@@ -322,16 +419,48 @@ class PortfolioSyncService:
                 fn_name,
                 user_id,
             )
-            jwt_token = await self.broker_session_service.refresh_token_if_needed(
-                user_id=user_id,
-                broker=ANGEL_ONE_BROKER,
-                force=True,
-            )
-            payload = await self._execute_angel_one_call(
-                fn_name=fn_name,
-                jwt_token=jwt_token,
-                **kwargs,
-            )
+            try:
+                jwt_token = await self.broker_session_service.refresh_token_if_needed(
+                    user_id=user_id,
+                    broker=ANGEL_ONE_BROKER,
+                    force=True,
+                )
+            except Exception as exc:
+                logger.error(
+                    "Angel One token refresh failed for user %s: %s",
+                    user_id,
+                    exc,
+                    exc_info=True,
+                )
+                raise
+
+            try:
+                payload = await asyncio.wait_for(
+                    self._execute_angel_one_call(
+                        fn_name=fn_name,
+                        jwt_token=jwt_token,
+                        **kwargs,
+                    ),
+                    timeout=35.0,  # Same timeout as initial call
+                )
+            except TimeoutError:
+                logger.warning(
+                    "Angel One %s call timeout (after token refresh) for %s",
+                    fn_name,
+                    user_id,
+                )
+                raise BrokerAuthError(
+                    f"Angel One {fn_name} request timed out after token refresh."
+                ) from None
+            except Exception as exc:
+                logger.error(
+                    "Angel One %s API call failed (after refresh) for %s: %s",
+                    fn_name,
+                    user_id,
+                    exc,
+                    exc_info=True,
+                )
+                raise
 
         if is_invalid_token_payload(payload):
             raise BrokerAuthError(
@@ -618,6 +747,7 @@ class PortfolioSyncService:
         symbol = cls._pick_string_value(
             normalized,
             (
+                "tradingsymbol",
                 "tradingSymbol",
                 "trading_symbol",
                 "symbol",
@@ -735,6 +865,11 @@ class PortfolioSyncService:
                 "m2m",
             ),
         )
+        if current_value is None and invested_amount is not None and pnl is not None:
+            current_value = invested_amount + pnl
+            normalized["currentValue"] = current_value
+            if "current_value" not in normalized:
+                normalized["current_value"] = current_value
         if pnl is None and invested_amount is not None and current_value is not None:
             pnl = current_value - invested_amount
         if pnl is not None:

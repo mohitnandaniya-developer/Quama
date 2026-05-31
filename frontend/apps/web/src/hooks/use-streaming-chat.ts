@@ -1,6 +1,7 @@
 import {
   ApiError,
   applyUserAuthHeader,
+  createNetworkError,
   isAbortError,
   resolveApiUrl,
 } from "@/lib/chat-api"
@@ -57,12 +58,7 @@ export function useStreamingChat() {
         throw error
       }
 
-      throw new ApiError({
-        status: null,
-        code: "network_error",
-        kind: "network",
-        message: `Could not reach the backend at ${resolveApiUrl("")}. Make sure the backend server is running on port 8000.`,
-      })
+      throw createNetworkError()
     }
 
     if (!response.ok) {

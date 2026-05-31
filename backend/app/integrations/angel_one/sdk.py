@@ -147,9 +147,49 @@ def map_broker_auth_error(exc: Exception) -> BrokerAuthError:
 
 
 async def execute_read_call(*, client: Any, fn_name: str, **kwargs) -> Any:
-    """Run a SmartConnect read call in a worker thread."""
+    """Run a SmartConnect read call in a worker thread with timeout protection."""
+    import logging
+
+    logger = logging.getLogger(__name__)
+
     fn = getattr(client, fn_name)
+    # Increased timeout for initial/slow connections
+    timeout_seconds = 30.0
+
     try:
-        return await asyncio.to_thread(fn, **kwargs)
+        return await asyncio.wait_for(
+            asyncio.to_thread(fn, **kwargs),
+            timeout=timeout_seconds,
+        )
+    except TimeoutError:
+        logger.warning(
+            "Angel One %s API call timed out after %.1f seconds",
+            fn_name,
+            timeout_seconds,
+        )
+        raise BrokerRefreshError(
+            f"Angel One {fn_name} request timed out. Please try again."
+        ) from None
     except Exception as exc:  # pragma: no cover - depends on SDK/network.
+        error_message = str(exc)
+
+        # Check for rate limiting error
+        if (
+            "exceeding access rate" in error_message.lower()
+            or "rate limit" in error_message.lower()
+        ):
+            logger.warning(
+                "Angel One %s API call rate limited: %s",
+                fn_name,
+                exc,
+            )
+            raise BrokerRefreshError(
+                "Angel One API rate limit exceeded. Please wait a moment and try again."
+            ) from exc
+
+        logger.warning(
+            "Angel One %s API call failed: %s",
+            fn_name,
+            exc,
+        )
         raise BrokerRefreshError(f"Broker request failed for {fn_name}.") from exc

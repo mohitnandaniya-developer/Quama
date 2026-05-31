@@ -125,7 +125,10 @@ class BrokerSessionService:
             jwt_token,
             self._jwt_ttl_seconds(),
         )
-        await self._delete_dependent_cache_keys(user_id=user_id)
+        await self._delete_dependent_cache_keys(
+            user_id=user_id,
+            broker=ANGEL_ONE_BROKER,
+        )
 
         return BrokerConnectResponse(
             broker=broker_session.broker,
@@ -179,7 +182,10 @@ class BrokerSessionService:
             jwt_token,
             self._jwt_ttl_seconds(),
         )
-        await self._delete_dependent_cache_keys(user_id=user_id)
+        await self._delete_dependent_cache_keys(
+            user_id=user_id,
+            broker=GROWW_BROKER,
+        )
 
         return BrokerConnectResponse(
             broker=broker_session.broker,
@@ -241,7 +247,7 @@ class BrokerSessionService:
         await self.session.commit()
 
         await self.cache_service.delete(broker_jwt_key(user_id=user_id, broker=broker))
-        await self._delete_dependent_cache_keys(user_id=user_id)
+        await self._delete_dependent_cache_keys(user_id=user_id, broker=broker)
 
     async def get_active_session(
         self,
@@ -426,7 +432,7 @@ class BrokerSessionService:
             jwt_token,
             self._jwt_ttl_seconds(),
         )
-        await self._delete_dependent_cache_keys(user_id=user_id)
+        await self._delete_dependent_cache_keys(user_id=user_id, broker=broker)
         return jwt_token
 
     async def _invalidate_broker_session(
@@ -444,11 +450,11 @@ class BrokerSessionService:
         broker_session.expires_at = None
         await self.session.commit()
         await self.cache_service.delete(broker_jwt_key(user_id=user_id, broker=broker))
-        await self._delete_dependent_cache_keys(user_id=user_id)
+        await self._delete_dependent_cache_keys(user_id=user_id, broker=broker)
 
     async def _invalidate_cache_only(self, *, user_id: str, broker: str) -> None:
         await self.cache_service.delete(broker_jwt_key(user_id=user_id, broker=broker))
-        await self._delete_dependent_cache_keys(user_id=user_id)
+        await self._delete_dependent_cache_keys(user_id=user_id, broker=broker)
 
     async def invalidate_session(self, *, user_id: str, broker: str) -> None:
         """Deactivate a broker session without calling broker-side logout APIs."""
@@ -535,7 +541,9 @@ class BrokerSessionService:
             )
         return self._should_refresh_token(broker_session)
 
-    async def _delete_dependent_cache_keys(self, *, user_id: str) -> None:
+    async def _delete_dependent_cache_keys(self, *, user_id: str, broker: str) -> None:
+        if broker != ANGEL_ONE_BROKER:
+            return
         await asyncio.gather(
             *(
                 self.cache_service.delete(key)

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 
 from app.dependencies import (
     get_broker_registry,
@@ -128,12 +128,27 @@ async def angel_one_portfolio(
     registry: Annotated[BrokerServiceRegistry, Depends(get_broker_registry)],
 ) -> BrokerPortfolioResponse:
     """Return Angel One portfolio summary."""
-    broker = registry.get(ANGEL_ONE_BROKER)
-    payload = await broker.get_portfolio(
-        user_id=user_id,
-        trigger="user_action",
-        force_refresh=True,
-    )
+    try:
+        broker = registry.get(ANGEL_ONE_BROKER)
+        payload = await broker.get_portfolio(
+            user_id=user_id,
+            trigger="user_action",
+            force_refresh=False,
+        )
+    except Exception as exc:
+        import logging
+
+        logger = logging.getLogger(__name__)
+        logger.error(
+            "Angel One portfolio fetch failed for user %s: %s",
+            user_id,
+            exc,
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=503, detail=f"Unable to fetch Angel One portfolio: {str(exc)}"
+        ) from exc
+
     return BrokerPortfolioResponse(
         holdings=payload["holdings"],
         funds=payload["funds"],

@@ -235,7 +235,6 @@ export type ApiAgentQueryResponse = {
   available_tools: Array<ApiMcpTool>
 }
 
-const CHAT_USER_STORAGE_KEY = "quama-chat-user-id"
 type AuthTokenProvider = () => Promise<string | null>
 let authTokenProvider: AuthTokenProvider | null = null
 
@@ -276,6 +275,15 @@ function getApiBaseUrl() {
   return value.replace(/\/$/, "")
 }
 
+export function createNetworkError() {
+  return new ApiError({
+    status: null,
+    code: "network_error",
+    kind: "network",
+    message: `Could not connect to the backend at ${getApiBaseUrl()}. Verify that the backend is online and allows requests from this frontend origin.`,
+  })
+}
+
 type ApiRequestOptions = {
   init?: RequestInit
   includeUserId?: boolean
@@ -309,12 +317,7 @@ async function apiRequest<T>(
       throw error
     }
 
-    throw new ApiError({
-      status: null,
-      code: "network_error",
-      kind: "network",
-      message: `Could not reach the backend at ${getApiBaseUrl()}. Make sure the backend server is running on port 8000.`,
-    })
+    throw createNetworkError()
   }
 
   if (!response.ok) {
@@ -365,29 +368,12 @@ function normalizeMessage(message: ApiMessage): ApiMessage {
   }
 }
 
-export function getChatUserId() {
-  const configuredUserId = import.meta.env.VITE_CHAT_USER_ID
-  if (configuredUserId) {
-    return configuredUserId
-  }
-
-  if (typeof window === "undefined") {
-    return "local-dev-user"
-  }
-
-  const existingUserId = window.localStorage.getItem(CHAT_USER_STORAGE_KEY)
-  if (existingUserId) {
-    return existingUserId
-  }
-
-  const generatedUserId = crypto.randomUUID()
-
-  window.localStorage.setItem(CHAT_USER_STORAGE_KEY, generatedUserId)
-  return generatedUserId
+function getChatUserId() {
+  return import.meta.env.VITE_CHAT_USER_ID?.trim() ?? ""
 }
 
-function canUseUserIdFallback() {
-  return import.meta.env.DEV || Boolean(import.meta.env.VITE_CHAT_USER_ID)
+export function canUseUserIdFallback() {
+  return Boolean(getChatUserId())
 }
 
 export function setAuthTokenProvider(provider: AuthTokenProvider | null) {
@@ -662,12 +648,7 @@ export async function streamMarketData({
       throw error
     }
 
-    throw new ApiError({
-      status: null,
-      code: "network_error",
-      kind: "network",
-      message: `Could not reach the backend at ${resolveApiUrl("")}. Make sure the backend server is running on port 8000.`,
-    })
+    throw createNetworkError()
   }
 
   if (!response.ok) {

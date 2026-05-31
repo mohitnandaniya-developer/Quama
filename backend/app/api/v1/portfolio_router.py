@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 
 from app.dependencies import get_portfolio_sync_service, require_user_id
 from app.schemas.portfolio import PortfolioSnapshotResponse, PortfolioSyncRequest
@@ -37,9 +37,17 @@ async def get_portfolio_history(
     service: Annotated[PortfolioSyncService, Depends(get_portfolio_sync_service)],
 ) -> PortfolioHistoryResponse:
     """Fetch dynamic historical performance data."""
-    history = await service.get_portfolio_history(
-        user_id=user_id,
-        broker=broker,
-        period=period,
-    )
+    try:
+        history = await service.get_portfolio_history(
+            user_id=user_id,
+            broker=broker,
+            period=period,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to fetch portfolio history for {broker}: {str(exc)}",
+        ) from exc
     return PortfolioHistoryResponse(period=period, history=history)

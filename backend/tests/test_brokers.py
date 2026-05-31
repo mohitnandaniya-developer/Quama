@@ -27,6 +27,7 @@ from app.services.broker_session_service import (
     refresh_all_expiring_tokens,
 )
 from app.services.brokers.groww_service import GrowwBrokerService
+from app.services.portfolio_history import resolve_portfolio_history_window
 from app.services.portfolio_sync_service import PortfolioSyncService
 
 
@@ -134,6 +135,83 @@ def test_market_data_bus_url_falls_back_to_direct_upstash_url(
     assert settings.market_data_bus_url == settings.upstash_redis_rest_url
 
     get_settings.cache_clear()
+
+
+@pytest.mark.parametrize(
+    ("period", "expected_delta"),
+    [
+        ("1M", timedelta(days=30)),
+        ("6M", timedelta(days=183)),
+        ("1Y", timedelta(days=365)),
+        ("3Y", timedelta(days=365 * 3)),
+        ("5Y", timedelta(days=365 * 5)),
+    ],
+)
+def test_portfolio_history_window_supports_dashboard_ranges(
+    period: str,
+    expected_delta: timedelta,
+) -> None:
+    """Dashboard range controls map to the same backend windows for every broker."""
+    end_at = datetime(2026, 5, 31, 12, 30, tzinfo=UTC)
+
+    window = resolve_portfolio_history_window(period, end_at=end_at)
+
+    assert window.period == period
+    assert window.start_at == end_at - expected_delta
+    assert window.end_at == end_at
+
+
+def test_portfolio_history_window_supports_all_available_data() -> None:
+    """The All control asks upstream brokers for the full practical history."""
+    end_at = datetime(2026, 5, 31, 12, 30, tzinfo=UTC)
+
+    window = resolve_portfolio_history_window("All", end_at=end_at)
+
+    assert window.period == "ALL"
+    assert window.start_at == datetime(2000, 1, 1, tzinfo=UTC)
+    assert window.end_at == end_at
+
+
+def test_groww_history_builds_official_equity_symbols() -> None:
+    """Groww candle requests use exchange-prefixed Groww symbols."""
+    assert (
+        GrowwBrokerService._groww_symbol_for_holding(
+            {"trading_symbol": "RELIANCE"},
+        )
+        == "NSE-RELIANCE"
+    )
+    assert (
+        GrowwBrokerService._groww_symbol_for_holding(
+            {"trading_symbol": "RELIANCE", "exchange": "BSE"},
+        )
+        == "BSE-RELIANCE"
+    )
+    assert (
+        GrowwBrokerService._groww_symbol_for_holding(
+            {"groww_symbol": "NSE-WIPRO"},
+        )
+        == "NSE-WIPRO"
+    )
+    assert (
+        GrowwBrokerService._groww_symbol_for_holding(
+            {"trading_symbol": "BSE-RELIANCE"},
+        )
+        == "BSE-RELIANCE"
+    )
+
+
+def test_groww_history_chunks_long_ranges_for_upstream_limit() -> None:
+    """Groww candle requests stay inside the upstream 180-day limit."""
+    end_at = datetime(2026, 5, 31, 12, 30, tzinfo=UTC)
+
+    chunks = GrowwBrokerService._history_chunks(
+        start_at=datetime(2000, 1, 1, tzinfo=UTC),
+        end_at=end_at,
+    )
+
+    assert chunks[0][0] == datetime(2020, 1, 1, tzinfo=UTC)
+    assert chunks[-1][1] == end_at
+    assert all(end - start <= timedelta(days=180) for start, end in chunks)
 
 
 async def _fetch_broker_session(
@@ -259,6 +337,7 @@ async def test_connect_groww_uses_api_key_totp_and_returns_portfolio(
     user_headers,
 ) -> None:
     """Groww stores the SDK access token and returns SDK portfolio data."""
+    history_calls: list[str] = []
 
     async def fake_access_token(
         self: BrokerSessionService,
@@ -322,19 +401,18 @@ async def test_connect_groww_uses_api_key_totp_and_returns_portfolio(
             assert exchange == "NSE"
             assert segment == "CASH"
             assert candle_interval == "1day"
-            assert timeout == 5
+            assert timeout == 15
+            history_calls.append(groww_symbol)
             close_by_symbol = {
-                "RELIANCE": (100.0, 130.0),
-                "IRFC": (100.0, 120.0),
+                "NSE-RELIANCE": (100.0, 130.0),
+                "NSE-IRFC": (100.0, 120.0),
             }
             first_close, second_close = close_by_symbol[groww_symbol]
             return {
-                "payload": {
-                    "candles": [
-                        ["2020-01-01T00:00:00+05:30", 0, 0, 0, first_close],
-                        ["2020-01-02T00:00:00+05:30", 0, 0, 0, second_close],
-                    ]
-                }
+                "candles": [
+                    ["2020-01-01T00:00:00+05:30", 0, 0, 0, first_close],
+                    ["2020-01-02T00:00:00+05:30", 0, 0, 0, second_close],
+                ]
             }
 
         def get_positions_for_user(self) -> dict[str, object]:
@@ -374,8 +452,15 @@ async def test_connect_groww_uses_api_key_totp_and_returns_portfolio(
         "/api/v1/brokers/groww/portfolio",
         headers=user_headers,
     )
+    assert history_calls == []
+
+    history_response = await client.get(
+        "/api/v1/portfolio/groww/history?period=6M",
+        headers=user_headers,
+    )
 
     assert connect_response.status_code == 200
+    assert history_response.status_code == 200
     assert connect_response.json()["client_code"] == "API ...-key"
 
     row = await _fetch_broker_session("test-user", broker=GROWW_BROKER)
@@ -403,8 +488,93 @@ async def test_connect_groww_uses_api_key_totp_and_returns_portfolio(
         "investment": 500.0,
         "overall_gain": 120.0,
     }
-    assert {"date": "2020-01-01", "value": 500.0} in portfolio["performance_history"]
-    assert {"date": "2020-01-02", "value": 620.0} in portfolio["performance_history"]
+    assert portfolio["performance_history"] == [
+        {
+            "date": datetime.now(UTC).date().isoformat(),
+            "value": 620.0,
+        }
+    ]
+    history = history_response.json()
+    assert history["period"] == "6M"
+    assert history["history"][-1]["value"] == 620.0
+    assert history["history"][-1]["invested"] == 500.0
+    assert len(history_calls) == 4
+    assert history_calls.count("NSE-RELIANCE") == 2
+    assert history_calls.count("NSE-IRFC") == 2
+
+
+@pytest.mark.asyncio
+async def test_groww_connect_preserves_cached_angel_one_snapshot(
+    client,
+    fake_cache_service,
+    monkeypatch: pytest.MonkeyPatch,
+    smart_api_factory: FakeSmartApiFactory,
+    user_headers,
+) -> None:
+    """Switching through Groww keeps the last valid Angel One dashboard snapshot."""
+    smart_api_factory.session_payloads = [
+        {
+            "data": {
+                "jwtToken": "jwt-angel",
+                "refreshToken": "refresh-1",
+                "feedToken": "feed-angel",
+                "clientcode": "A3300",
+            }
+        }
+    ]
+
+    angel_connect_response = await client.post(
+        "/api/v1/brokers/angel-one/connect",
+        headers=user_headers,
+        json={
+            "client_code": "A3300",
+            "password": "broker-pass",
+            "totp": "123456",
+        },
+    )
+    angel_portfolio_response = await client.get(
+        "/api/v1/brokers/angel-one/portfolio",
+        headers=user_headers,
+    )
+    assert angel_connect_response.status_code == 200
+    assert angel_portfolio_response.status_code == 200
+    assert portfolio_snapshot_key(user_id="test-user") in fake_cache_service.store
+
+    async def fake_access_token(
+        self: BrokerSessionService,
+        *,
+        api_key: str,
+        totp: str,
+    ) -> str:
+        del self
+        assert api_key == "groww-user-api-key"
+        assert totp == "654321"
+        return "groww-access-token"
+
+    monkeypatch.setattr(
+        BrokerSessionService,
+        "_request_groww_access_token",
+        fake_access_token,
+    )
+    groww_connect_response = await client.post(
+        "/api/v1/brokers/groww/connect",
+        headers=user_headers,
+        json={
+            "api_key": "groww-user-api-key",
+            "totp": "654321",
+        },
+    )
+    assert groww_connect_response.status_code == 200
+    assert portfolio_snapshot_key(user_id="test-user") in fake_cache_service.store
+
+    smart_api_factory.holdings_payload = {"status": False}
+    switched_back_response = await client.get(
+        "/api/v1/brokers/angel-one/portfolio",
+        headers=user_headers,
+    )
+
+    assert switched_back_response.status_code == 200
+    assert switched_back_response.json() == angel_portfolio_response.json()
 
 
 @pytest.mark.asyncio
@@ -534,6 +704,70 @@ async def test_groww_ltp_fetch_uses_quote_fallback_when_ltp_is_empty(
     assert holding["ltp"] == 112.5
     assert holding["current_value"] == 1125.0
     assert holding["pnl"] == pytest.approx(143.6)
+
+
+@pytest.mark.asyncio
+async def test_groww_history_retries_transient_candle_failures(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A transient Groww candle failure does not erase the portfolio chart."""
+
+    class FakeBrokerSessionService:
+        async def get_jwt(self, *, user_id: str, broker: str) -> str:
+            assert user_id == "test-user"
+            assert broker == GROWW_BROKER
+            return "groww-access-token"
+
+    class FakeGrowwClient:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def get_historical_candles(
+            self,
+            exchange: str,
+            segment: str,
+            groww_symbol: str,
+            start_time: str,
+            end_time: str,
+            candle_interval: str,
+            *,
+            timeout: int,
+        ) -> dict[str, object]:
+            del start_time, end_time
+            assert exchange == "NSE"
+            assert segment == "CASH"
+            assert groww_symbol == "NSE-IRFC"
+            assert candle_interval == "1day"
+            assert timeout == 15
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("temporary Groww timeout")
+            return {
+                "candles": [
+                    ["2026-05-01T00:00:00+05:30", 0, 0, 0, 120.0],
+                ]
+            }
+
+    groww_client = FakeGrowwClient()
+    monkeypatch.setattr(
+        GrowwBrokerService,
+        "_create_groww_client",
+        lambda self, access_token: groww_client,
+    )
+    service = GrowwBrokerService(
+        broker_session_service=FakeBrokerSessionService(),
+    )
+
+    history = await service._fetch_weighted_history(
+        user_id="test-user",
+        holdings=[{"trading_symbol": "IRFC", "quantity": 3}],
+        start_at=datetime(2026, 5, 1, tzinfo=UTC),
+        end_at=datetime(2026, 5, 31, tzinfo=UTC),
+        interval_str="1day",
+    )
+
+    assert history == {"2026-05-01": 360.0}
+    assert groww_client.calls == 2
 
 
 @pytest.mark.asyncio
@@ -676,6 +910,10 @@ async def test_broker_data_endpoints_cache_expected_ttls(
         "/api/v1/brokers/status",
         headers=user_headers,
     )
+    history_response = await client.get(
+        "/api/v1/portfolio/angel-one/history?period=1M",
+        headers=user_headers,
+    )
 
     assert holdings_response.status_code == 200
     assert positions_response.status_code == 200
@@ -683,6 +921,7 @@ async def test_broker_data_endpoints_cache_expected_ttls(
     assert portfolio_response.status_code == 200
     assert sync_response.status_code == 200
     assert status_response.status_code == 200
+    assert history_response.status_code == 200
 
     holdings_payload = holdings_response.json()
     assert [holding["tradingsymbol"] for holding in holdings_payload] == [
@@ -690,8 +929,10 @@ async def test_broker_data_endpoints_cache_expected_ttls(
         "TCS-EQ",
     ]
     assert holdings_payload[0]["quantity"] == 3.0
+    assert holdings_payload[0]["symbol"] == "INFY-EQ"
     assert holdings_payload[0]["averagePrice"] == 1500.0
     assert holdings_payload[0]["currentValue"] == 4950.0
+    assert holdings_payload[1]["currentValue"] == 6400.0
     assert positions_response.json() == [{"tradingsymbol": "NIFTY24APR", "netqty": 1}]
     assert funds_response.json() == {"availablecash": 125000.5, "net": 125000.5}
     portfolio_payload = portfolio_response.json()
@@ -706,7 +947,12 @@ async def test_broker_data_endpoints_cache_expected_ttls(
         "overall_gain": 850.0,
     }
     assert portfolio_payload["connected_broker"] == "angel_one"
-    assert portfolio_payload["performance_history"] == []
+    assert portfolio_payload["performance_history"] == [
+        {
+            "date": datetime.now(UTC).date().isoformat(),
+            "value": 11350.0,
+        }
+    ]
     assert sync_response.json()["positions"] == [
         {"tradingsymbol": "NIFTY24APR", "netqty": 1}
     ]
@@ -716,11 +962,15 @@ async def test_broker_data_endpoints_cache_expected_ttls(
     assert sync_response.json()["summary"] == {
         "funds": 125000.5,
         "investment": 10500.0,
-        "holdings_market_value": 4950.0,
+        "holdings_market_value": 11350.0,
         "positions_market_value": None,
         "overall_gain": 850.0,
     }
     assert status_response.json()["items"][0]["broker"] == "angel_one"
+    history_payload = history_response.json()
+    assert history_payload["period"] == "1M"
+    assert history_payload["history"][-1]["value"] == 11350.0
+    assert history_payload["history"][-1]["invested"] == 10500.0
 
     assert (
         fake_cache_service.ttl_by_key[portfolio_snapshot_key(user_id="test-user")]
