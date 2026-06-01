@@ -186,7 +186,7 @@ def map_broker_auth_error(exc: Exception) -> BrokerAuthError:
 
 
 async def execute_read_call(*, client: Any, fn_name: str, **kwargs) -> Any:
-    """Run a SmartConnect read call in a worker thread with timeout protection and retries."""
+    """Run a SmartConnect read call in a thread with timeout and retries."""
     import logging
 
     logger = logging.getLogger(__name__)
@@ -243,7 +243,8 @@ async def execute_read_call(*, client: Any, fn_name: str, **kwargs) -> Any:
                     exc,
                 )
                 raise BrokerRefreshError(
-                    "Angel One API rate limit exceeded. Please wait a moment and try again."
+                    "Angel One API rate limit exceeded. "
+                    "Please wait a moment and try again."
                 ) from exc
 
             # If it's a different exception, don't retry (unless we want to).
