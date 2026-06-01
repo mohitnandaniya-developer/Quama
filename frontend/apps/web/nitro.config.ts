@@ -1,17 +1,17 @@
-import { defineNitroConfig } from 'nitro/config'
+import { defineNitroConfig } from "nitro/config"
 
 export default defineNitroConfig({
-  presets: ['vercel'],
+  presets: ["vercel"],
   output: {
-    dir: '.output',
-    public: '.output/public',
-    server: '.output/server',
+    dir: ".output",
+    public: ".output/public",
+    server: ".output/server",
   },
   typescript: {
     strict: false,
     esbuild: {
       options: {
-        target: 'esnext',
+        target: "esnext",
       },
     },
   },
