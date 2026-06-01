@@ -48,10 +48,28 @@ def ensure_angel_one_configured(settings: Settings) -> None:
 
 def create_smart_connect(settings: Settings):
     """Create a SmartConnect REST client."""
+    import os
+    import tempfile
+
     from SmartApi import SmartConnect
 
     _install_sensitive_sdk_log_filter()
-    return SmartConnect(api_key=settings.angel_one_api_key)
+
+    # SmartConnect SDK unconditionally attempts to create a "logs" directory in the CWD.
+    # In read-only serverless environments, this throws a PermissionError.
+    # We briefly monkeypatch os.path.join to redirect the logs directory to /tmp.
+    original_join = os.path.join
+
+    def mock_join(*args):
+        if args and args[0] == "logs":
+            return original_join(tempfile.gettempdir(), *args)
+        return original_join(*args)
+
+    try:
+        os.path.join = mock_join
+        return SmartConnect(api_key=settings.angel_one_api_key)
+    finally:
+        os.path.join = original_join
 
 
 def create_market_feed_client(
