@@ -77,18 +77,9 @@ class ConversationRepository:
         limit: int,
     ) -> tuple[list[Conversation], int]:
         """Return paginated active conversations and the total count."""
-        total_stmt = (
-            select(func.count())
-            .select_from(Conversation)
-            .where(
-                Conversation.user_id == user_id,
-                Conversation.deleted_at.is_(None),
-            )
-        )
-        total = await self.session.scalar(total_stmt)
-
-        items_stmt = (
-            select(Conversation)
+        total_count_col = func.count().over().label("total_count")
+        stmt = (
+            select(Conversation, total_count_col)
             .options(
                 load_only(
                     Conversation.id,
@@ -108,8 +99,21 @@ class ConversationRepository:
             .offset(skip)
             .limit(limit)
         )
-        items = (await self.session.execute(items_stmt)).scalars().all()
-        return items, int(total or 0)
+        rows = (await self.session.execute(stmt)).all()
+
+        if not rows:
+            total_stmt = (
+                select(func.count())
+                .select_from(Conversation)
+                .where(
+                    Conversation.user_id == user_id,
+                    Conversation.deleted_at.is_(None),
+                )
+            )
+            total = await self.session.scalar(total_stmt)
+            return [], int(total or 0)
+
+        return [row.Conversation for row in rows], int(rows[0].total_count)
 
     async def soft_delete(self, conversation: Conversation) -> Conversation:
         """Soft-delete a conversation."""

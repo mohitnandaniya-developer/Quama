@@ -91,35 +91,6 @@ class PortfolioSyncService:
         )
         return snapshot
 
-    async def get_cached_agent_context(self, *, user_id: str) -> dict[str, Any] | None:
-        """Return a portfolio snapshot for agent context if any broker is connected.
-
-        Checks Angel One first (uses cached snapshot), then checks whether a
-        Groww session exists and signals to the caller that Groww data should
-        be fetched separately (returns a sentinel so ChatService can handle it).
-        """
-        angel_session = await self.broker_session_service.get_active_session(
-            user_id=user_id,
-            broker=ANGEL_ONE_BROKER,
-        )
-        if angel_session is not None:
-            return await self.get_portfolio_snapshot(
-                user_id=user_id,
-                trigger="agent_request",
-                force_refresh=False,
-            )
-
-        groww_session = await self.broker_session_service.get_active_session(
-            user_id=user_id,
-            broker=GROWW_BROKER,
-        )
-        if groww_session is not None:
-            # Signal to ChatService that Groww is connected.
-            # ChatService will call GrowwBrokerService.get_portfolio() directly.
-            return {"__broker__": GROWW_BROKER}
-
-        return None
-
     async def get_portfolio_history(
         self, user_id: str, broker: str, period: str
     ) -> list[dict[str, Any]]:

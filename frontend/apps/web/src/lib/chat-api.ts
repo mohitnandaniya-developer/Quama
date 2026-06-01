@@ -150,46 +150,6 @@ export type ApiBrokerPortfolioResponse = {
   performance_history: Array<Record<string, unknown>>
 }
 
-export type ApiMarketInstrument = {
-  exchange_type: number
-  instrument_token: string
-}
-
-export type MarketSubscriptionPayload = {
-  mode?: number
-  replace?: boolean
-  instruments: Array<ApiMarketInstrument>
-}
-
-export type ApiMarketSubscriptionResponse = {
-  user_id: string
-  broker: string
-  mode: number
-  replace: boolean
-  instruments: Array<ApiMarketInstrument>
-  subscription_key: string
-  command_channel: string
-}
-
-export type ApiMarketTick = {
-  instrument_token: string
-  exchange_type: number | null
-  subscription_mode: number | null
-  sequence_number: number | null
-  price: number | null
-  price_raw: number | null
-  volume: number | null
-  timestamp: string | null
-  source: string
-  published_at: string
-}
-
-export type ApiMarketStreamEvent = {
-  channel: string
-  tick: ApiMarketTick
-  snapshot: boolean
-}
-
 export type ApiMcpTool = {
   name: string
   description: string
@@ -222,17 +182,6 @@ export type ConnectMcpProviderPayload = {
   transport?: "mock" | "http_jsonrpc"
   server_url?: string | null
   access_token?: string | null
-}
-
-export type ApiAgentQueryResponse = {
-  answer: string
-  tool_calls: Array<{
-    provider: string
-    tool: string
-    arguments: Record<string, unknown>
-    result: unknown
-  }>
-  available_tools: Array<ApiMcpTool>
 }
 
 type AuthTokenProvider = () => Promise<string | null>
@@ -520,22 +469,6 @@ export async function fetchBrokerStatus() {
   return apiRequest<ApiBrokerStatusResponse>("/api/v1/brokers/status")
 }
 
-export async function fetchAngelOneHoldings() {
-  return apiRequest<Array<Record<string, unknown>>>(
-    "/api/v1/brokers/angel-one/holdings"
-  )
-}
-
-export async function fetchAngelOnePositions() {
-  return apiRequest<Array<Record<string, unknown>>>(
-    "/api/v1/brokers/angel-one/positions"
-  )
-}
-
-export async function fetchAngelOneFunds() {
-  return apiRequest<Record<string, unknown>>("/api/v1/brokers/angel-one/funds")
-}
-
 export async function fetchAngelOnePortfolio() {
   return apiRequest<ApiBrokerPortfolioResponse>(
     "/api/v1/brokers/angel-one/portfolio"
@@ -587,160 +520,6 @@ export async function disconnectMcpProvider(provider: string) {
       init: { method: "DELETE" },
     }
   )
-}
-
-export async function queryAgent(message: string) {
-  return apiRequest<ApiAgentQueryResponse>("/api/v1/agent/query", {
-    init: {
-      method: "POST",
-      body: JSON.stringify({ message }),
-    },
-  })
-}
-
-export async function registerMarketSubscriptions(
-  payload: MarketSubscriptionPayload
-) {
-  return apiRequest<ApiMarketSubscriptionResponse>(
-    "/api/v1/market/subscriptions",
-    {
-      init: {
-        method: "POST",
-        body: JSON.stringify({
-          mode: payload.mode ?? 1,
-          replace: payload.replace ?? true,
-          instruments: payload.instruments,
-        }),
-      },
-    }
-  )
-}
-
-export async function streamMarketData({
-  instrumentTokens,
-  signal,
-  onEvent,
-}: {
-  instrumentTokens: Array<string>
-  signal?: AbortSignal
-  onEvent: (event: ApiMarketStreamEvent) => void
-}) {
-  const uniqueTokens = Array.from(
-    new Set(
-      instrumentTokens
-        .map((token) => token.trim())
-        .filter((token) => token.length > 0)
-    )
-  )
-
-  if (uniqueTokens.length === 0) {
-    return
-  }
-
-  const query = new URLSearchParams()
-  uniqueTokens.forEach((instrumentToken) => {
-    query.append("instrument_token", instrumentToken)
-  })
-
-  let response: Response
-
-  try {
-    response = await fetch(
-      resolveApiUrl(`/api/v1/market/stream?${query.toString()}`),
-      {
-        headers: await buildStreamHeaders(),
-        signal,
-      }
-    )
-  } catch (error) {
-    if (isAbortError(error)) {
-      throw error
-    }
-
-    throw createNetworkError()
-  }
-
-  if (!response.ok) {
-    let detail = `Request failed with status ${response.status}.`
-    let code = "http_error"
-    const rawBody = await response.text()
-
-    try {
-      const payload = JSON.parse(rawBody) as {
-        error?: { code?: string; message?: string }
-        detail?: string
-      }
-      if (payload.error?.message) {
-        detail = payload.error.message
-      } else if (payload.detail) {
-        detail = payload.detail
-      }
-      if (payload.error?.code) {
-        code = payload.error.code
-      }
-    } catch {
-      if (rawBody.trim()) {
-        detail = rawBody
-      }
-    }
-
-    throw new ApiError({
-      status: response.status,
-      code,
-      kind: getErrorKind(response.status),
-      message: detail,
-    })
-  }
-
-  if (!response.body) {
-    throw new ApiError({
-      status: 500,
-      code: "stream_unavailable",
-      kind: "server",
-      message: "Streaming is unavailable in this browser.",
-    })
-  }
-
-  const reader = response.body.getReader()
-  const decoder = new TextDecoder()
-  let buffer = ""
-
-  for (;;) {
-    const { done, value } = await reader.read()
-    if (done) {
-      break
-    }
-
-    buffer += decoder.decode(value, { stream: true })
-    const events = buffer.split("\n\n")
-    buffer = events.pop() ?? ""
-
-    for (const event of events) {
-      const dataLines = event
-        .split("\n")
-        .filter((line) => line.startsWith("data: "))
-        .map((line) => line.slice(6))
-
-      if (dataLines.length === 0) {
-        continue
-      }
-
-      const data = dataLines.join("\n")
-      if (data === "[DONE]") {
-        return
-      }
-
-      onEvent(JSON.parse(data) as ApiMarketStreamEvent)
-    }
-  }
-}
-
-async function buildStreamHeaders() {
-  const headers = new Headers({
-    Accept: "text/event-stream",
-  })
-  await applyUserAuthHeader(headers)
-  return headers
 }
 
 export function resolveApiUrl(path: string) {

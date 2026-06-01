@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Any
 
 from app.config import Settings
@@ -12,6 +13,25 @@ from app.core.exceptions import (
     BrokerRefreshError,
     BrokerTotpError,
 )
+
+_SENSITIVE_SDK_LOG_PREFIX = "Error occurred while making"
+
+
+class _SensitiveSDKLogFilter(logging.Filter):
+    """Drop SDK records that include credentials and request payloads."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return not record.getMessage().startswith(_SENSITIVE_SDK_LOG_PREFIX)
+
+
+_sensitive_sdk_log_filter = _SensitiveSDKLogFilter()
+
+
+def _install_sensitive_sdk_log_filter() -> None:
+    from logzero import logger as sdk_logger
+
+    if _sensitive_sdk_log_filter not in sdk_logger.filters:
+        sdk_logger.addFilter(_sensitive_sdk_log_filter)
 
 
 def ensure_angel_one_configured(settings: Settings) -> None:
@@ -30,6 +50,7 @@ def create_smart_connect(settings: Settings):
     """Create a SmartConnect REST client."""
     from SmartApi import SmartConnect
 
+    _install_sensitive_sdk_log_filter()
     return SmartConnect(api_key=settings.angel_one_api_key)
 
 

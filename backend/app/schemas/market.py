@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime
-
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -38,20 +36,3 @@ class MarketSubscriptionResponse(BaseModel):
     instruments: list[MarketInstrument]
     subscription_key: str
     command_channel: str
-
-
-class MarketTickSnapshot(BaseModel):
-    """Normalized market tick payload."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    instrument_token: str
-    exchange_type: int | None
-    subscription_mode: int | None
-    sequence_number: int | None
-    price: float | None
-    price_raw: float | None
-    volume: float | None
-    timestamp: datetime | None
-    source: str
-    published_at: datetime

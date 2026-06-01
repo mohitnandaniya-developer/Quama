@@ -23,7 +23,6 @@ os.environ["UPSTASH_REDIS_REST_TOKEN"] = "token"
 os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///./test-bootstrap.db"
 os.environ["DEBUG"] = "true"
 os.environ["ALLOWED_ORIGINS"] = "http://localhost:3000"
-os.environ["PINECONE_API_KEY"] = "pinecone-test-key"
 os.environ["ANGEL_ONE_API_KEY"] = "angel-api-key"
 os.environ["ANGEL_ONE_MARKET_API_KEY"] = "angel-api-key"
 os.environ["ANGEL_ONE_SECRET_KEY"] = "angel-secret"
@@ -52,9 +51,6 @@ class FakeCacheService:
     async def delete(self, key: str) -> bool:
         self.ttl_by_key.pop(key, None)
         return self.store.pop(key, None) is not None
-
-    async def exists(self, key: str) -> bool:
-        return key in self.store
 
     async def ping(self) -> bool:
         return True
@@ -112,121 +108,6 @@ class FakeMarketDataBus:
         return None
 
 
-class FakePineconeService:
-    """In-memory Pinecone substitute for asset RAG and memory tests."""
-
-    def __init__(self) -> None:
-        self.enabled = True
-        self.asset_records: dict[str, list[dict[str, object]]] = {}
-        self.memory_records: dict[str, list[dict[str, object]]] = {}
-
-    async def close(self) -> None:
-        return None
-
-    def build_user_namespace(self, *, user_id: str) -> str:
-        return f"user-{user_id}"
-
-    def build_memory_namespace(self, *, user_id: str) -> str:
-        return f"memory-{user_id}"
-
-    async def chunk_and_index(
-        self,
-        *,
-        asset_id: str,
-        user_id: str,
-        file_path: str,
-        file_name: str,
-        mime_type: str,
-    ) -> dict[str, int]:
-        namespace = self.build_user_namespace(user_id=user_id)
-        path = Path(file_path)
-        if mime_type.startswith("image/"):
-            text = f"Image asset: {file_name}"
-        else:
-            text = path.read_text(encoding="utf-8", errors="ignore")
-        self.asset_records.setdefault(namespace, []).append(
-            {
-                "asset_id": asset_id,
-                "user_id": user_id,
-                "asset_name": file_name,
-                "text": text or f"Stored asset: {file_name}",
-                "mime_type": mime_type,
-            }
-        )
-        return {"chunks_created": 1, "vectors_upserted": 1}
-
-    async def delete_asset_vectors(self, *, asset_id: str, user_id: str) -> None:
-        namespace = self.build_user_namespace(user_id=user_id)
-        self.asset_records[namespace] = [
-            record
-            for record in self.asset_records.get(namespace, [])
-            if record["asset_id"] != asset_id
-        ]
-
-    async def retrieve_context(
-        self,
-        *,
-        user_message: str,
-        user_id: str,
-        top_k: int = 5,
-        relevance_threshold: float = 0.75,
-    ) -> list[str]:
-        del relevance_threshold
-        namespace = self.build_user_namespace(user_id=user_id)
-        query_terms = {
-            term.lower() for term in user_message.split() if len(term.strip()) > 2
-        }
-        scored: list[tuple[int, str]] = []
-        for record in self.asset_records.get(namespace, []):
-            text = str(record["text"])
-            overlap = sum(term in text.lower() for term in query_terms)
-            if overlap <= 0:
-                continue
-            scored.append((overlap, f"{text} (source: {record['asset_name']})"))
-        scored.sort(key=lambda item: item[0], reverse=True)
-        return [result for _, result in scored[:top_k]]
-
-    async def store_memory_summary(
-        self,
-        *,
-        user_id: str,
-        conversation_id: str,
-        summary: str,
-        segment_key: str,
-    ) -> bool:
-        namespace = self.build_memory_namespace(user_id=user_id)
-        self.memory_records.setdefault(namespace, []).append(
-            {
-                "id": f"{conversation_id}:{segment_key}",
-                "summary": summary,
-            }
-        )
-        return True
-
-    async def retrieve_memories(
-        self,
-        *,
-        user_id: str,
-        user_message: str,
-        top_k: int = 3,
-        relevance_threshold: float = 0.75,
-    ) -> list[str]:
-        del relevance_threshold
-        namespace = self.build_memory_namespace(user_id=user_id)
-        query_terms = {
-            term.lower() for term in user_message.split() if len(term.strip()) > 2
-        }
-        scored: list[tuple[int, str]] = []
-        for record in self.memory_records.get(namespace, []):
-            summary = str(record["summary"])
-            overlap = sum(term in summary.lower() for term in query_terms)
-            if overlap <= 0:
-                continue
-            scored.append((overlap, summary))
-        scored.sort(key=lambda item: item[0], reverse=True)
-        return [summary for _, summary in scored[:top_k]]
-
-
 @pytest.fixture
 def test_settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Settings:
     """Provide isolated settings for tests."""
@@ -239,7 +120,6 @@ def test_settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Settings:
     monkeypatch.setenv("DATABASE_URL", database_url)
     monkeypatch.setenv("DEBUG", "true")
     monkeypatch.setenv("ALLOWED_ORIGINS", "http://localhost:3000")
-    monkeypatch.setenv("PINECONE_API_KEY", "pinecone-test-key")
     monkeypatch.setenv("ANGEL_ONE_API_KEY", "angel-api-key")
     monkeypatch.setenv("ANGEL_ONE_MARKET_API_KEY", "angel-api-key")
     monkeypatch.setenv("ANGEL_ONE_SECRET_KEY", "angel-secret")
@@ -258,12 +138,6 @@ def fake_cache_service() -> FakeCacheService:
 
 
 @pytest.fixture
-def fake_pinecone_service() -> FakePineconeService:
-    """Return an in-memory Pinecone service for tests."""
-    return FakePineconeService()
-
-
-@pytest.fixture
 def fake_market_data_bus() -> FakeMarketDataBus:
     """Return an in-memory market bus for tests."""
     return FakeMarketDataBus()
@@ -273,7 +147,6 @@ def fake_market_data_bus() -> FakeMarketDataBus:
 async def client(
     test_settings: Settings,
     fake_cache_service: FakeCacheService,
-    fake_pinecone_service: FakePineconeService,
     fake_market_data_bus: FakeMarketDataBus,
 ) -> AsyncIterator[AsyncClient]:
     """Yield an async test client with lifespan enabled."""
@@ -281,7 +154,6 @@ async def client(
     app.dependency_overrides[get_cache_service] = lambda: fake_cache_service
 
     async with LifespanManager(app):
-        app.state.pinecone_service = fake_pinecone_service
         app.state.market_data_bus = fake_market_data_bus
         transport = ASGITransport(app=app)
         async with AsyncClient(

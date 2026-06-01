@@ -71,7 +71,3 @@ class BaseBrokerService(ABC):
     @abstractmethod
     async def refresh_token(self, *, user_id: str, force: bool = False) -> str:
         """Refresh and return a broker JWT/access token."""
-
-    @abstractmethod
-    async def validate_session(self, *, user_id: str) -> bool:
-        """Return whether an active broker session exists for the user."""

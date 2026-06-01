@@ -135,7 +135,7 @@ See [Makefile](Makefile) for the full command list.
 
 ## Tech Stack
 
-- Backend: FastAPI, SQLAlchemy, PostgreSQL, Redis, Pinecone
+- Backend: FastAPI, SQLAlchemy, PostgreSQL, Redis
 - Frontend: TanStack Start, React 19, TypeScript, shadcn/ui, Tailwind
 - Auth: Clerk
 - Broker integration: Angel One Smart API

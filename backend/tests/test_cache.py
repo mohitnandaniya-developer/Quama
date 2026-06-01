@@ -16,7 +16,6 @@ async def test_cache_service_disabled_mode_falls_back_cleanly() -> None:
     assert await cache.ping() is False
     assert await cache.get("missing") is None
     assert await cache.set("key", {"value": 1}, 60) is False
-    assert await cache.exists("key") is False
     assert await cache.delete("key") is False
 
 

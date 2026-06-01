@@ -55,14 +55,6 @@ class ProviderRequestError(AppError):
     default_message = "The model provider request failed."
 
 
-class CacheMissError(AppError):
-    """Raised when cached history is unexpectedly unavailable."""
-
-    status_code = 503
-    code = "cache_miss"
-    default_message = "Cached conversation history is unavailable."
-
-
 class BrokerNotConfiguredError(AppError):
     """Raised when broker settings are incomplete."""
 

@@ -3347,8 +3347,7 @@ function App() {
                       <DialogHeader>
                         <DialogTitle>Sources</DialogTitle>
                         <DialogDescription>
-                          Files in Sources are indexed for Pinecone-backed
-                          retrieval and stay in your library until removed.
+                          Files in Sources stay in your library until removed.
                         </DialogDescription>
                       </DialogHeader>
                       <div className="flex flex-col gap-4 px-4 pb-2">

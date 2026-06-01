@@ -24,7 +24,7 @@ target_metadata = Base.metadata
 # Override the URL from the app settings so alembic always uses the same
 # DATABASE_URL as the running application; no manual alembic.ini edits needed.
 _settings = get_settings()
-config.set_main_option("sqlalchemy.url", _settings.database_url)
+config.set_main_option("sqlalchemy.url", _settings.database_url.replace("%", "%%"))
 
 # asyncpg does not support the synchronous psycopg-style URL used by some
 # offline tooling, so we swap the scheme for the offline (synchronous) runner

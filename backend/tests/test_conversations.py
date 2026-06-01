@@ -69,6 +69,28 @@ async def test_list_conversations_returns_paginated_envelope(
 
 
 @pytest.mark.asyncio
+async def test_list_conversations_keeps_total_for_out_of_range_page(
+    client,
+    user_headers,
+) -> None:
+    """An empty page should still report the number of matching rows."""
+    await client.post(
+        "/api/v1/conversations",
+        headers=user_headers,
+        json={"provider": "google", "model_name": "gemini-1.5-pro"},
+    )
+
+    response = await client.get(
+        "/api/v1/conversations?skip=10&limit=10",
+        headers=user_headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["items"] == []
+    assert response.json()["total"] == 1
+
+
+@pytest.mark.asyncio
 async def test_create_conversation_rejects_unknown_fields(
     client,
     user_headers,

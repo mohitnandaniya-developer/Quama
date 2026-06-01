@@ -148,23 +148,6 @@ class CacheService:
             return False
         return bool(result)
 
-    async def exists(self, key: str) -> bool:
-        """Return whether a cache key exists."""
-        if not self.enabled:
-            return False
-
-        try:
-            if self.mode == "redis":
-                if self.redis_client is None:
-                    return False
-                result = await self.redis_client.exists(key)
-            else:
-                result = await self._request("GET", f"/exists/{self._encode(key)}")
-        except Exception:
-            logger.warning("Redis EXISTS failed for key %s.", key, exc_info=True)
-            return False
-        return bool(result)
-
     async def close(self) -> None:
         """Close any owned network client."""
         if self._owns_http_client and self.http_client is not None:

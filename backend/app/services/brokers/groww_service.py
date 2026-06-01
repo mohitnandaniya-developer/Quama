@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import logging
+from contextlib import redirect_stdout
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -330,13 +332,6 @@ class GrowwBrokerService(BaseBrokerService):
             "Groww sessions require a fresh TOTP login. Please reconnect Groww."
         )
 
-    async def validate_session(self, *, user_id: str) -> bool:
-        session = await self.broker_session_service.get_active_session(
-            user_id=user_id,
-            broker=self.broker_name,
-        )
-        return session is not None
-
     async def _request_groww_json(
         self,
         *,
@@ -419,7 +414,8 @@ class GrowwBrokerService(BaseBrokerService):
 
     def _create_groww_client(self, access_token: str) -> Any:
         groww_api = BrokerSessionService._get_groww_api_class()
-        return groww_api(access_token)
+        with redirect_stdout(io.StringIO()):
+            return groww_api(access_token)
 
     async def _fetch_ltp_map(
         self,

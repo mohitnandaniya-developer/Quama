@@ -21,7 +21,12 @@ def _build_engine_kwargs(database_url: str) -> dict:
     if database_url.startswith("postgresql"):
         # Supabase (and most managed PG) requires SSL. asyncpg accepts "require"
         # as the ssl parameter inside connect_args.
-        kwargs["connect_args"] = {"ssl": "require"}
+        kwargs["pool_pre_ping"] = True
+        kwargs["pool_recycle"] = 3600
+        kwargs["connect_args"] = {
+            "ssl": "require",
+            "timeout": 10,
+        }
     return kwargs
 
 
@@ -37,14 +42,6 @@ def init_engine(database_url: str, *, echo: bool = False) -> None:
             class_=AsyncSession,
             expire_on_commit=False,
         )
-
-
-def get_engine() -> AsyncEngine:
-    """Return the initialized async engine."""
-    if _engine is None:
-        msg = "Database engine has not been initialized."
-        raise RuntimeError(msg)
-    return _engine
 
 
 def get_session_maker() -> async_sessionmaker[AsyncSession]:

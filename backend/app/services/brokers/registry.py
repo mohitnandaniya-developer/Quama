@@ -36,11 +36,6 @@ class BrokerServiceRegistry:
             raise InvalidBrokerError(f"Unsupported broker '{broker_key}'.")
         return service
 
-    @property
-    def supported_brokers(self) -> tuple[str, ...]:
-        """Return known broker ids for diagnostics and docs."""
-        return tuple(sorted(self._services.keys()))
-
     @staticmethod
     def _normalize_broker_name(value: str) -> str:
         normalized = value.strip().lower().replace("-", "_")

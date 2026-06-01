@@ -41,8 +41,6 @@ SYSTEM_SCRATCHPAD_PROMPT = (
     "You are Quama, an agentic AI assistant. Think step by step. If a task "
     "requires multiple steps, outline your plan briefly before executing."
 )
-MEMORY_SUMMARY_PROVIDER = "groq"
-MEMORY_SUMMARY_MODEL = "llama-3.1-8b-instant"
 DEFAULT_CHAT_HISTORY_CACHE_TTL_SECONDS = 3600
 
 
@@ -51,7 +49,6 @@ class ChatService:
 
     history_limit = 20
     cache_ttl_seconds = DEFAULT_CHAT_HISTORY_CACHE_TTL_SECONDS
-    memory_summary_window = 10
     _conversation_locks: ClassVar[dict[uuid.UUID, asyncio.Lock]] = {}
 
     def __init__(
@@ -98,14 +95,6 @@ class ChatService:
                 normalized_attachments,
             )
             llm = self._get_llm(conversation.provider, conversation.model_name)
-            knowledge_context = await self._safe_retrieve_knowledge_context(
-                user_message=user_message,
-                user_id=user_id,
-            )
-            memory_context = await self._safe_retrieve_memory_context(
-                user_message=user_message,
-                user_id=user_id,
-            )
             portfolio_context = await self._safe_retrieve_portfolio_context(
                 user_id=user_id,
             )
@@ -118,8 +107,6 @@ class ChatService:
                 user_message,
                 normalized_attachments,
                 provider=conversation.provider,
-                knowledge_context=knowledge_context,
-                memory_context=memory_context,
                 portfolio_context=portfolio_context,
                 news_context=news_context,
             )
@@ -144,10 +131,6 @@ class ChatService:
                 attachments=self._attachments_for_storage(normalized_attachments),
                 assistant_content=assistant_content,
                 token_count=token_count,
-            )
-            await self._maybe_store_conversation_memory(
-                conversation=conversation,
-                user_id=user_id,
             )
 
         return ChatMessageResponse(
@@ -186,14 +169,6 @@ class ChatService:
                 normalized_attachments,
             )
             llm = self._get_llm(conversation.provider, conversation.model_name)
-            knowledge_context = await self._safe_retrieve_knowledge_context(
-                user_message=user_message,
-                user_id=user_id,
-            )
-            memory_context = await self._safe_retrieve_memory_context(
-                user_message=user_message,
-                user_id=user_id,
-            )
             portfolio_context = await self._safe_retrieve_portfolio_context(
                 user_id=user_id,
             )
@@ -206,8 +181,6 @@ class ChatService:
                 user_message,
                 normalized_attachments,
                 provider=conversation.provider,
-                knowledge_context=knowledge_context,
-                memory_context=memory_context,
                 portfolio_context=portfolio_context,
                 news_context=news_context,
             )
@@ -260,10 +233,6 @@ class ChatService:
                     attachments=self._attachments_for_storage(normalized_attachments),
                     assistant_content="".join(assistant_parts),
                     token_count=None,
-                )
-                await self._maybe_store_conversation_memory(
-                    conversation=conversation,
-                    user_id=user_id,
                 )
                 yield "[DONE]"
             except Exception:
@@ -401,8 +370,6 @@ class ChatService:
         attachments: list[dict[str, Any]],
         *,
         provider: str,
-        knowledge_context: list[str],
-        memory_context: list[str],
         portfolio_context: dict[str, Any] | None,
         news_context: dict[str, Any] | None,
     ) -> list[HumanMessage | AIMessage | SystemMessage]:
@@ -417,15 +384,6 @@ class ChatService:
             messages.append(
                 SystemMessage(content=self._format_news_context(news_context))
             )
-        if memory_context:
-            messages.append(
-                SystemMessage(content=self._format_memory_context(memory_context))
-            )
-        if knowledge_context:
-            messages.append(
-                SystemMessage(content=self._format_knowledge_context(knowledge_context))
-            )
-
         for item in history:
             role = item["role"]
             content = item["content"]
@@ -545,24 +503,6 @@ class ChatService:
                 "Choose GPT-4o or Gemini to send images."
             )
             raise InvalidProviderModelError(msg)
-
-    async def _safe_retrieve_knowledge_context(
-        self,
-        *,
-        user_message: str,
-        user_id: str,
-    ) -> list[str]:
-        """Knowledge retrieval is disabled (Pinecone removed)."""
-        return []
-
-    async def _safe_retrieve_memory_context(
-        self,
-        *,
-        user_message: str,
-        user_id: str,
-    ) -> list[str]:
-        """Memory retrieval is disabled (Pinecone removed)."""
-        return []
 
     async def _safe_retrieve_portfolio_context(
         self,
@@ -685,67 +625,6 @@ class ChatService:
             "articlesCount": max_results,
             "articlesSortBy": "date",
         }
-
-    async def _maybe_store_conversation_memory(
-        self,
-        *,
-        conversation: Conversation,
-        user_id: str,
-    ) -> None:
-        """Memory storage is disabled (Pinecone removed)."""
-        return
-
-    async def _summarize_memory_segment(
-        self,
-        messages: list[dict[str, Any]],
-        *,
-        provider: str,
-        model_name: str,
-    ) -> str:
-        transcript_lines = [
-            f"{item.get('role', 'unknown')}: {str(item.get('content', '')).strip()}"
-            for item in messages
-            if str(item.get("content", "")).strip()
-        ]
-        if not transcript_lines:
-            return ""
-
-        try:
-            try:
-                llm = self._get_llm(MEMORY_SUMMARY_PROVIDER, MEMORY_SUMMARY_MODEL)
-            except InvalidProviderModelError:
-                llm = self._get_llm(provider, model_name)
-            response = await llm.ainvoke(
-                [
-                    SystemMessage(
-                        content=(
-                            "Summarize this conversation segment in 3-5 sentences, "
-                            "capturing key facts, decisions, and user preferences."
-                        )
-                    ),
-                    HumanMessage(content="\n".join(transcript_lines)),
-                ]
-            )
-        except Exception:
-            logger.exception("Conversation memory summarization failed.")
-            return ""
-
-        return self._extract_text(getattr(response, "content", response)).strip()
-
-    @staticmethod
-    def _format_knowledge_context(context_blocks: list[str]) -> str:
-        return (
-            "KNOWLEDGE BASE CONTEXT (from user's uploaded assets):\n"
-            "---\n" + "\n".join(context_blocks) + "\n---\n"
-            "Use this context to answer the user's question when relevant. "
-            "If the context is not relevant, answer from your general knowledge."
-        )
-
-    @staticmethod
-    def _format_memory_context(memory_context: list[str]) -> str:
-        return "CONVERSATION MEMORY:\n" + "\n".join(
-            f"- {summary}" for summary in memory_context
-        )
 
     @staticmethod
     def _format_portfolio_context(portfolio_context: dict[str, Any]) -> str:

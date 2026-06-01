@@ -106,10 +106,3 @@ class AngelOneBrokerService(BaseBrokerService):
             broker=self.broker_name,
             force=force,
         )
-
-    async def validate_session(self, *, user_id: str) -> bool:
-        session = await self.broker_session_service.get_active_session(
-            user_id=user_id,
-            broker=self.broker_name,
-        )
-        return session is not None

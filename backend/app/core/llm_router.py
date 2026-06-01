@@ -89,11 +89,6 @@ class LLMRouter:
         ]
 
     @classmethod
-    def validate_provider_model(cls, provider: str, model_name: str) -> None:
-        """Validate a provider/model combination."""
-        cls.resolve_provider_model(provider, model_name)
-
-    @classmethod
     def resolve_provider_model(
         cls,
         provider: str,

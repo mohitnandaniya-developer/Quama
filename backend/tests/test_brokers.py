@@ -214,6 +214,32 @@ def test_groww_history_chunks_long_ranges_for_upstream_limit() -> None:
     assert all(end - start <= timedelta(days=180) for start, end in chunks)
 
 
+def test_groww_client_creation_suppresses_sdk_stdout(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Groww client construction should not flood the API process stdout."""
+
+    class NoisyGrowwClient:
+        def __init__(self, access_token: str) -> None:
+            self.access_token = access_token
+            print("Ready to Groww!")
+
+    monkeypatch.setattr(
+        BrokerSessionService,
+        "_get_groww_api_class",
+        staticmethod(lambda: NoisyGrowwClient),
+    )
+    service = GrowwBrokerService(
+        broker_session_service=SimpleNamespace(),  # type: ignore[arg-type]
+    )
+
+    client = service._create_groww_client("access-token")
+
+    assert client.access_token == "access-token"
+    assert capsys.readouterr().out == ""
+
+
 async def _fetch_broker_session(
     user_id: str,
     broker: str = ANGEL_ONE_BROKER,
@@ -255,6 +281,45 @@ def test_encrypt_decrypt_round_trip(test_settings) -> None:
 
     assert cipher_text != "jwt-secret"
     assert decrypt(cipher_text) == "jwt-secret"
+
+
+@pytest.mark.asyncio
+async def test_broker_session_reads_release_database_transaction(
+    client,
+    fake_cache_service,
+    test_settings,
+) -> None:
+    """Broker reads should not hold a connection during upstream API calls."""
+    del client
+    session_maker = get_session_maker()
+    async with session_maker() as session:
+        session.add(
+            BrokerSession(
+                user_id="read-release-user",
+                broker=ANGEL_ONE_BROKER,
+                client_code="A1001",
+                jwt_token=encrypt("jwt-token"),
+                refresh_token=encrypt("refresh-token"),
+                is_active=True,
+            )
+        )
+        await session.commit()
+        service = BrokerSessionService(
+            session=session,
+            cache_service=fake_cache_service,
+            settings=test_settings,
+        )
+
+        row = await service.get_active_session(
+            user_id="read-release-user",
+            broker=ANGEL_ONE_BROKER,
+        )
+        assert row is not None
+        assert session.in_transaction() is False
+
+        rows = await service.list_active_sessions(user_id="read-release-user")
+        assert len(rows) == 1
+        assert session.in_transaction() is False
 
 
 @pytest.mark.asyncio

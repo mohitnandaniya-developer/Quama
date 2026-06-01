@@ -33,7 +33,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 def run_migrations(database_url: str) -> None:
     """Run Alembic migrations to the latest revision."""
     alembic_config = AlembicConfig(str(PROJECT_ROOT / "alembic.ini"))
-    alembic_config.set_main_option("sqlalchemy.url", database_url)
+    alembic_config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
     command.upgrade(alembic_config, "head")
 
 
@@ -60,10 +60,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.settings = resolved_settings
         app.state.cache_service = cache_service
         app.state.market_data_bus = market_data_bus
-        session_maker = get_session_maker()
+        session_maker = get_session_maker() if resolved_settings.database_url else None
 
         async def token_refresh_loop() -> None:
-            if not resolved_settings.database_url:
+            if session_maker is None:
                 logger.warning("Token refresh loop disabled: DATABASE_URL is missing.")
                 return
             while True:

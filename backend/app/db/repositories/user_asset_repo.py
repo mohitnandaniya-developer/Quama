@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -64,9 +63,3 @@ class UserAssetRepository:
     async def delete(self, asset: UserAsset) -> None:
         """Delete an asset record."""
         await self.session.delete(asset)
-
-    async def touch(self, asset: UserAsset) -> UserAsset:
-        """Update the asset timestamp."""
-        asset.updated_at = datetime.now(UTC)
-        await self.session.flush()
-        return asset

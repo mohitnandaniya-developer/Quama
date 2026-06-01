@@ -7,7 +7,7 @@ from typing import Annotated
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from dotenv import load_dotenv
-from pydantic import AliasChoices, Field, field_validator, model_validator
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 load_dotenv(".env")
@@ -22,6 +22,7 @@ class Settings(BaseSettings):
         case_sensitive=False,
         extra="ignore",
         env_ignore_empty=True,
+        hide_input_in_errors=True,
     )
 
     # LLM providers — only set the key(s) you actually use.
@@ -112,12 +113,6 @@ class Settings(BaseSettings):
         alias="GROWW_SECRET_KEY",
     )
 
-    @model_validator(mode="after")
-    def validate_required_secrets(self) -> Settings:
-        """Validate required security settings."""
-        # Validation removed so the app doesn't crash on Render when missing secrets
-        return self
-
     @field_validator("allowed_origins", mode="before")
     @classmethod
     def parse_allowed_origins(cls, value: str | list[str]) -> list[str]:
@@ -153,6 +148,19 @@ class Settings(BaseSettings):
             return database_url
 
         parsed_url = urlsplit(database_url)
+        try:
+            _ = parsed_url.port
+        except ValueError as exc:
+            msg = (
+                "DATABASE_URL has an invalid port. Use a complete PostgreSQL URL "
+                "such as postgresql://user:password@host:5432/database."
+            )
+            raise ValueError(msg) from exc
+
+        if not parsed_url.hostname:
+            msg = "DATABASE_URL must include a PostgreSQL hostname."
+            raise ValueError(msg)
+
         query = [
             (key, value)
             for key, value in parse_qsl(parsed_url.query, keep_blank_values=True)

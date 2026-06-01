@@ -12,8 +12,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
 from app.core.cache_keys import (
-    broker_dependent_cache_keys,
     broker_jwt_key,
+    portfolio_snapshot_key,
 )
 from app.core.encryption import decrypt, encrypt
 from app.core.exceptions import (
@@ -273,7 +273,9 @@ class BrokerSessionService:
             BrokerSession.is_active.is_(True),
         )
         result = await self.session.execute(stmt)
-        return result.scalar_one_or_none()
+        broker_session = result.scalar_one_or_none()
+        await self._release_read_transaction()
+        return broker_session
 
     async def list_active_sessions(self, *, user_id: str) -> list[BrokerSession]:
         """Return all active broker sessions for a user."""
@@ -286,7 +288,9 @@ class BrokerSessionService:
             .order_by(BrokerSession.connected_at.desc())
         )
         result = await self.session.execute(stmt)
-        return list(result.scalars().all())
+        rows = list(result.scalars().all())
+        await self._release_read_transaction()
+        return rows
 
     async def get_jwt(self, *, user_id: str, broker: str) -> str:
         """Return a current broker JWT, preferring Redis over the database."""
@@ -362,9 +366,13 @@ class BrokerSessionService:
         user_id: str,
         broker: str,
         force: bool = False,
+        broker_session: BrokerSession | None = None,
     ) -> str:
         """Refresh a broker JWT while holding a user+broker refresh lock."""
-        broker_session = await self.get_active_session(user_id=user_id, broker=broker)
+        broker_session = broker_session or await self.get_active_session(
+            user_id=user_id,
+            broker=broker,
+        )
         if broker_session is None:
             raise BrokerSessionNotFoundError()
 
@@ -437,7 +445,6 @@ class BrokerSessionService:
         )
 
         await self.session.commit()
-        await self.cache_service.delete(broker_jwt_key(user_id=user_id, broker=broker))
         await self.cache_service.set(
             broker_jwt_key(user_id=user_id, broker=broker),
             jwt_token,
@@ -445,6 +452,24 @@ class BrokerSessionService:
         )
         await self._delete_dependent_cache_keys(user_id=user_id, broker=broker)
         return jwt_token
+
+    async def _refresh_session_token_if_needed(
+        self,
+        *,
+        broker_session: BrokerSession,
+        force: bool = False,
+    ) -> str:
+        """Refresh an already-loaded broker session without querying it again."""
+        user_id = broker_session.user_id
+        broker = broker_session.broker
+        refresh_lock = await self._get_refresh_lock(user_id=user_id, broker=broker)
+        async with refresh_lock:
+            return await self._refresh_token_locked(
+                user_id=user_id,
+                broker=broker,
+                force=force,
+                broker_session=broker_session,
+            )
 
     async def _invalidate_broker_session(
         self,
@@ -516,6 +541,7 @@ class BrokerSessionService:
         user_id: str,
         broker: str,
     ) -> BrokerSession:
+        """Get or create a broker session."""
         stmt = select(BrokerSession).where(
             BrokerSession.user_id == user_id,
             BrokerSession.broker == broker,
@@ -555,12 +581,12 @@ class BrokerSessionService:
     async def _delete_dependent_cache_keys(self, *, user_id: str, broker: str) -> None:
         if broker != ANGEL_ONE_BROKER:
             return
-        await asyncio.gather(
-            *(
-                self.cache_service.delete(key)
-                for key in broker_dependent_cache_keys(user_id=user_id)
-            ),
-        )
+        await self.cache_service.delete(portfolio_snapshot_key(user_id=user_id))
+
+    async def _release_read_transaction(self) -> None:
+        """Return read-only database connections before slow broker API calls."""
+        if self.session.in_transaction():
+            await self.session.commit()
 
     def _jwt_ttl_seconds(self) -> int:
         """Return the configured broker JWT cache TTL."""
@@ -572,7 +598,6 @@ class BrokerSessionService:
             return value.replace(tzinfo=UTC)
         return value.astimezone(UTC)
 
-    @staticmethod
     @staticmethod
     def _extract_groww_access_token(payload: Any) -> str:
         if isinstance(payload, str) and payload.strip():
@@ -653,6 +678,8 @@ async def refresh_all_expiring_tokens(
         ),
     )
     rows = (await session.execute(stmt)).scalars().all()
+    if session.in_transaction():
+        await session.commit()
 
     for row in rows:
         if row.broker != ANGEL_ONE_BROKER:
@@ -663,9 +690,8 @@ async def refresh_all_expiring_tokens(
             settings=settings,
         )
         try:
-            await service.refresh_token_if_needed(
-                user_id=row.user_id,
-                broker=row.broker,
+            await service._refresh_session_token_if_needed(
+                broker_session=row,
             )
         except Exception:
             logger.exception(
