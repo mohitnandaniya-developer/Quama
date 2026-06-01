@@ -148,6 +148,7 @@ class Settings(BaseSettings):
 
         try:
             from sqlalchemy.engine.url import make_url
+
             parsed_url = make_url(database_url)
         except Exception as exc:
             msg = (
@@ -166,7 +167,7 @@ class Settings(BaseSettings):
             for k in keys_to_remove:
                 del new_query[k]
             parsed_url = parsed_url.set(query=new_query)
-            
+
         return parsed_url.render_as_string(hide_password=False)
 
     @field_validator("clerk_authorized_parties", mode="before")
