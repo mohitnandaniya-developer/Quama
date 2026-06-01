@@ -186,7 +186,7 @@ def map_broker_auth_error(exc: Exception) -> BrokerAuthError:
 
 
 async def execute_read_call(*, client: Any, fn_name: str, **kwargs) -> Any:
-    """Run a SmartConnect read call in a worker thread with timeout protection."""
+    """Run a SmartConnect read call in a worker thread with timeout protection and retries."""
     import logging
 
     logger = logging.getLogger(__name__)
@@ -194,41 +194,63 @@ async def execute_read_call(*, client: Any, fn_name: str, **kwargs) -> Any:
     fn = getattr(client, fn_name)
     # Increased timeout for initial/slow connections
     timeout_seconds = 30.0
+    max_retries = 3
+    base_delay = 1.0
 
-    try:
-        return await asyncio.wait_for(
-            asyncio.to_thread(fn, **kwargs),
-            timeout=timeout_seconds,
-        )
-    except TimeoutError:
-        logger.warning(
-            "Angel One %s API call timed out after %.1f seconds",
-            fn_name,
-            timeout_seconds,
-        )
-        raise BrokerRefreshError(
-            f"Angel One {fn_name} request timed out. Please try again."
-        ) from None
-    except Exception as exc:  # pragma: no cover - depends on SDK/network.
-        error_message = str(exc)
-
-        # Check for rate limiting error
-        if (
-            "exceeding access rate" in error_message.lower()
-            or "rate limit" in error_message.lower()
-        ):
+    for attempt in range(max_retries):
+        try:
+            return await asyncio.wait_for(
+                asyncio.to_thread(fn, **kwargs),
+                timeout=timeout_seconds,
+            )
+        except TimeoutError:
+            if attempt == max_retries - 1:
+                logger.warning(
+                    "Angel One %s API call timed out after %.1f seconds",
+                    fn_name,
+                    timeout_seconds,
+                )
+                raise BrokerRefreshError(
+                    f"Angel One {fn_name} request timed out. Please try again."
+                ) from None
             logger.warning(
-                "Angel One %s API call rate limited: %s",
+                "Angel One %s API call timed out. Retrying in %.1fs...",
+                fn_name,
+                base_delay,
+            )
+            await asyncio.sleep(base_delay)
+        except Exception as exc:  # pragma: no cover - depends on SDK/network.
+            error_message = str(exc).lower()
+
+            # Check for rate limiting error
+            if (
+                "exceeding access rate" in error_message
+                or "rate limit" in error_message
+            ):
+                if attempt < max_retries - 1:
+                    delay = base_delay * (2**attempt)
+                    logger.warning(
+                        "Angel One %s API call rate limited. Retrying in %.1fs...",
+                        fn_name,
+                        delay,
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+
+                logger.warning(
+                    "Angel One %s API call rate limited: %s",
+                    fn_name,
+                    exc,
+                )
+                raise BrokerRefreshError(
+                    "Angel One API rate limit exceeded. Please wait a moment and try again."
+                ) from exc
+
+            # If it's a different exception, don't retry (unless we want to).
+            # Usually we don't want to retry 400 Bad Requests or auth errors.
+            logger.warning(
+                "Angel One %s API call failed: %s",
                 fn_name,
                 exc,
             )
-            raise BrokerRefreshError(
-                "Angel One API rate limit exceeded. Please wait a moment and try again."
-            ) from exc
-
-        logger.warning(
-            "Angel One %s API call failed: %s",
-            fn_name,
-            exc,
-        )
-        raise BrokerRefreshError(f"Broker request failed for {fn_name}.") from exc
+            raise BrokerRefreshError(f"Broker request failed for {fn_name}.") from exc
