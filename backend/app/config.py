@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from functools import lru_cache
 from typing import Annotated
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from dotenv import load_dotenv
 from pydantic import AliasChoices, Field, field_validator
@@ -147,26 +146,28 @@ class Settings(BaseSettings):
         if not database_url.startswith("postgresql+asyncpg://"):
             return database_url
 
-        parsed_url = urlsplit(database_url)
         try:
-            _ = parsed_url.port
-        except ValueError as exc:
+            from sqlalchemy.engine.url import make_url
+            parsed_url = make_url(database_url)
+        except Exception as exc:
             msg = (
-                "DATABASE_URL has an invalid port. Use a complete PostgreSQL URL "
+                "Invalid DATABASE_URL. Use a complete PostgreSQL URL "
                 "such as postgresql://user:password@host:5432/database."
             )
             raise ValueError(msg) from exc
 
-        if not parsed_url.hostname:
+        if not parsed_url.host:
             msg = "DATABASE_URL must include a PostgreSQL hostname."
             raise ValueError(msg)
 
-        query = [
-            (key, value)
-            for key, value in parse_qsl(parsed_url.query, keep_blank_values=True)
-            if key.lower() != "sslmode"
-        ]
-        return urlunsplit(parsed_url._replace(query=urlencode(query)))
+        if parsed_url.query and "sslmode" in parsed_url.query:
+            new_query = dict(parsed_url.query)
+            keys_to_remove = [k for k in new_query if k.lower() == "sslmode"]
+            for k in keys_to_remove:
+                del new_query[k]
+            parsed_url = parsed_url.set(query=new_query)
+            
+        return parsed_url.render_as_string(hide_password=False)
 
     @field_validator("clerk_authorized_parties", mode="before")
     @classmethod
