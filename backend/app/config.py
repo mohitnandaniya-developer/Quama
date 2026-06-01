@@ -152,7 +152,7 @@ class Settings(BaseSettings):
             parsed_url = make_url(database_url)
         except Exception as exc:
             msg = (
-                "Invalid DATABASE_URL. Use a complete PostgreSQL URL "
+                "DATABASE_URL has an invalid port. Use a complete PostgreSQL URL "
                 "such as postgresql://user:password@host:5432/database."
             )
             raise ValueError(msg) from exc
